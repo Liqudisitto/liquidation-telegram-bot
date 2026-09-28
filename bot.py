@@ -1,19 +1,69 @@
 import shlex
 from protocol import VERSION
-from transport import ApiError
-from ui import ACTIONS, LIMBS, PARTS, REASONS, Buttons, character_text, date, duration, skill_name, today
+from transport import ApiError, TelegramError
+from ui import ACTIONS, LIMBS, PARTS, REASONS, Buttons, character_text, date, duration, skill_name, today, restore_parts, text_pages
+
+
+class UIError(ApiError):
+    pass
 
 
 class Bot:
     def __init__(self, config, telegram, panel):
         self.config, self.tg, self.panel = config, telegram, panel
         self.buttons = Buttons()
+        self.messages, self.context, self.results = {}, {}, {}
 
     def button(self, actor, text, kind, **data):
         return self.buttons.add(actor, text, kind, **data)
 
-    def menu(self, actor, chat, text='Liquidation 1.4.0 — управление сервером'):
-        self.tg.send(chat, text, [
+    def show(self, actor, text, buttons=None):
+        self.page(actor, text_pages(text), buttons or [], 0)
+
+    def page(self, actor, pages, keys, page):
+        page = max(0, min(page, len(pages)-1))
+        buttons = list(keys)
+        if len(pages) > 1:
+            nav = []
+            for title, index in [('← Страница', page-1), ('Страница →', page+1)]:
+                if 0 <= index < len(pages):
+                    nav.append(self.button(actor, title, 'textpage', pages=pages, keys=keys, page=index))
+            buttons = [nav] + buttons
+        text = pages[page] + (f'\n\nСтраница {page+1}/{len(pages)}' if len(pages) > 1 else '')
+        mid = self.messages.get(actor)
+        try:
+            if mid is not None:
+                try:
+                    self.tg.edit(actor, mid, text, buttons)
+                except TelegramError as error:
+                    if error.reason != 'not_editable':
+                        raise
+                    # Only a definitive "deleted/uneditable" permits a new message.
+                    result = self.tg.send(actor, text, buttons)
+                    self.messages[actor] = result['message_id']
+            else:
+                result = self.tg.send(actor, text, buttons)
+                self.messages[actor] = result['message_id']
+        except ApiError as error:
+            # A network timeout may mean the edit succeeded. Never flood or retry
+            # the game action because displaying its result failed.
+            raise UIError(str(error)) from None
+        self.buttons.retain(actor, {b['callback_data'] for row in buttons for b in row})
+
+    def character_back(self, actor, c):
+        return [self.button(actor, 'К персонажу', 'character', cid=c.id)]
+
+    def problem(self, actor, message):
+        context = self.context.get(actor)
+        if context:
+            state, c = context
+            self.character(actor, state, c, message)
+        else:
+            self.menu(actor, actor, message)
+
+    def menu(self, actor, chat, text='Liquidation 1.4.1 — управление сервером'):
+        self.context.pop(actor, None)
+        self.show(chat, text, [
             [self.button(actor, '🟢 Онлайн', 'users', online=True), self.button(actor, '📊 Все игроки', 'users')],
             [self.button(actor, '📅 Время за сегодня', 'users', today_only=True)],
             [self.button(actor, '📋 Журнал операций', 'journal')]])
@@ -32,23 +82,28 @@ class Bot:
         if callback:
             self.tg.call('answerCallbackQuery', callback_query_id=callback['id'])
         if not callback and msg.get('text', '').strip().split('@')[0] == '/myid':
-            self.tg.send(actor, f'Твой Telegram ID: {actor}')
+            self.show(actor, f'Твой Telegram ID: {actor}')
             return
         if actor not in self.config.admins:
-            self.tg.send(actor, f'Доступ закрыт. Твой Telegram ID: {actor}. Владелец задаёт доступ через ADMIN_IDS.')
+            self.show(actor, f'Доступ закрыт. Твой Telegram ID: {actor}. Владелец задаёт доступ через ADMIN_IDS.')
             return
         try:
             if callback:
+                mid = msg.get('message_id')
+                if isinstance(mid, int):
+                    self.messages[actor] = mid
                 b = self.buttons.get(actor, callback.get('data'))
                 if not b:
-                    self.menu(actor, actor, 'Кнопка устарела или уже использована. Открой меню заново.')
+                    self.problem(actor, 'Кнопка устарела или уже использована. Выбери действие заново.')
                     return
                 self.route(actor, b['kind'], b['data'])
             else:
                 self.command(actor, msg.get('text', ''))
+        except UIError:
+            raise
         except (ApiError, ValueError, KeyError) as error:
             # Only our own human-readable errors are delivered; no tracebacks or URLs.
-            self.menu(actor, actor, str(error) if isinstance(error, (ApiError, ValueError)) else 'Запись больше не найдена. Открой меню заново.')
+            self.problem(actor, str(error) if isinstance(error, (ApiError, ValueError)) else 'Запись больше не найдена. Открой меню заново.')
 
     def command(self, actor, text):
         try:
@@ -57,7 +112,7 @@ class Bot:
             raise ApiError('Закрой кавычки вокруг имени пользователя.') from None
         cmd = args[0].split('@')[0].lower() if args else ''
         if cmd in ('/start', '/menu', '/help'):
-            self.menu(actor, actor, 'Liquidation 1.4.0\nВыбери игрока и персонажа кнопками.\n'
+            self.menu(actor, actor, 'Liquidation 1.4.1\nВыбери игрока и персонажа кнопками.\n'
                 '/player "Имя пользователя" — карточка\n/totaltime "Имя пользователя" — всё время\n'
                 '/todaytime "Имя пользователя" — сегодня\n/myid — твой Telegram ID')
         elif cmd in ('/player', '/stats', '/totaltime', '/todaytime') and len(args) >= 2:
@@ -71,6 +126,12 @@ class Bot:
             self.menu(actor, actor)
 
     def route(self, actor, kind, data):
+        if kind == 'textpage':
+            self.page(actor, data['pages'], data['keys'], data['page'])
+            return
+        if kind == 'menu':
+            self.menu(actor, actor)
+            return
         if kind == 'journal':
             journal = self.panel.journal()
             lines = ['Последние операции:']
@@ -81,6 +142,7 @@ class Bot:
             return
         state = self.panel.snapshot()
         if kind == 'users':
+            self.context.pop(actor, None)
             users = sorted({c.user for c in state.chars.values()
                 if (not data.get('online') or c.online) and (not data.get('today_only') or today(state, c) > 0)}, key=str.casefold)
             page = data.get('page', 0)
@@ -94,7 +156,8 @@ class Bot:
                 message += '\nУправление отключено: проверь remote_admins.txt и журнал в консоли сервера.'
             if not state.fresh():
                 message += '\nСнимок от ' + date(state.stamp, state.offset) + '; данные об онлайне могут устареть.'
-            self.tg.send(actor, message, keys)
+            keys.append([self.button(actor, 'Главное меню', 'menu')])
+            self.show(actor, message, keys)
         elif kind == 'user':
             self.user(actor, state, data['user'], data.get('page', 0))
         elif kind == 'report':
@@ -103,6 +166,7 @@ class Bot:
             self.confirm(actor, state, data)
         else:
             c = state.chars[data['cid']]
+            self.context[actor] = (state, c)
             if kind == 'character':
                 self.character(actor, state, c)
             elif kind == 'skills':
@@ -111,16 +175,16 @@ class Bot:
                 self.controllable(state, c)
                 s = c.skills[data['perk']]
                 buttons = [self.button(actor, str(level), 'preview', cid=c.id, action='setskill', arg=s.id+':'+str(level)) for level in range(11)]
-                self.tg.send(actor, f'{skill_name(s)}: сейчас {s.level}/10. Выбери новый уровень.\n'
-                    'XP будет установлен на начало выбранного уровня.', [buttons[i:i+4] for i in range(0, 11, 4)])
+                self.show(actor, f'{skill_name(s)}: сейчас {s.level}/10. Выбери новый уровень.\n'
+                    'XP будет установлен на начало выбранного уровня.', [buttons[i:i+4] for i in range(0, 11, 4)] + [self.character_back(actor, c)])
             elif kind == 'parts':
                 self.controllable(state, c)
                 action = data['action']
-                parts = LIMBS if action == 'amputate' else PARTS.keys()
+                parts = restore_parts(c) if action == 'restore' else LIMBS if action == 'amputate' else PARTS.keys()
                 buttons = [self.button(actor, PARTS[p], 'preview', cid=c.id, action=action, arg=p)
-                    for p in parts if not (c.toc == 'ready' and p in c.amputated)]
-                self.tg.send(actor, f'{ACTIONS[action]} — выбери часть тела «{c.name}»: ',
-                             [buttons[i:i+2] for i in range(0, len(buttons), 2)])
+                    for p in parts if action == 'restore' or not (c.toc == 'ready' and p in c.amputated)]
+                self.show(actor, f'{ACTIONS[action]} — выбери часть тела «{c.name}»:' if buttons else 'Нет подходящих частей тела.',
+                             [buttons[i:i+2] for i in range(0, len(buttons), 2)] + [self.character_back(actor, c)])
             elif kind == 'sources':
                 self.controllable(state, c)
                 sources = [s for s in state.chars.values() if s.user == c.user and not s.alive and s.skills_at > 0 and s.skills]
@@ -131,12 +195,13 @@ class Bot:
                     keys.append([self.button(actor, '← Назад', 'sources', cid=c.id, page=page-1)])
                 if (page+1)*10 < len(sources):
                     keys.append([self.button(actor, 'Далее →', 'sources', cid=c.id, page=page+1)])
-                self.tg.send(actor, 'Выбери умершего персонажа — источник навыков:' if sources else
-                    'Нет умерших персонажей этого игрока с сохранёнными навыками. Запись навыков начинается с версии 1.4.0.', keys)
+                self.show(actor, 'Выбери умершего персонажа — источник навыков:' if sources else
+                    'Нет умерших персонажей этого игрока с сохранёнными навыками. Запись навыков начинается с версии 1.4.0.', keys + [self.character_back(actor, c)])
             elif kind == 'preview':
                 self.preview(actor, state, c, data['action'], data.get('arg', '-'))
 
     def user(self, actor, state, user, page=0):
+        self.context.pop(actor, None)
         chars = [c for c in state.chars.values() if c.user == user]
         if not chars:
             raise ApiError('Игрока с таким именем нет в истории мода. Регистр учитывается.')
@@ -146,7 +211,8 @@ class Bot:
         if (page+1)*10 < len(chars):
             keys.append([self.button(actor, 'Далее →', 'user', user=user, page=page+1)])
         keys += [[self.button(actor, 'Всё время', 'report', user=user), self.button(actor, 'Сегодня', 'report', user=user, today=True)]]
-        self.tg.send(actor, f'Игрок {user}\nВсего: {duration(sum(c.total for c in chars))}\n'
+        keys.append([self.button(actor, 'Главное меню', 'menu')])
+        self.show(actor, f'Игрок {user}\nВсего: {duration(sum(c.total for c in chars))}\n'
             f'Сегодня: {duration(sum(today(state, c) for c in chars))}\nПерсонажей: {len(chars)}', keys)
 
     def report(self, actor, state, user, only_today):
@@ -160,9 +226,12 @@ class Bot:
                 lines += ['\n' + character_text(state, c)]
         if not state.fresh():
             lines += ['Сервер не прислал свежих данных; показано последнее сохранённое время.']
-        self.menu(actor, actor, '\n'.join(lines))
+        self.show(actor, '\n'.join(lines), [[self.button(actor, 'К игроку', 'user', user=user)]])
 
-    def character(self, actor, state, c):
+    def character(self, actor, state, c, notice=None):
+        self.context[actor] = (state, c)
+        if notice is None and self.results.get(actor, (None,))[0] == c.id:
+            notice = self.results[actor][1]
         keys = [[self.button(actor, '📚 Навыки', 'skills', cid=c.id)]]
         if c.online and state.fresh() and state.enabled:
             keys += [[self.button(actor, '💚 Отхил', 'preview', cid=c.id, action='heal'),
@@ -170,9 +239,11 @@ class Bot:
             keys += [[self.button(actor, ACTIONS[a], 'parts', cid=c.id, action=a)] for a in ('bite', 'cut', 'scratch')]
             if c.toc == 'ready':
                 keys += [[self.button(actor, 'Ампутация', 'parts', cid=c.id, action='amputate')]]
+                if c.amputated:
+                    keys += [[self.button(actor, '🦾 Вернуть конечность', 'parts', cid=c.id, action='restore')]]
             keys += [[self.button(actor, 'Перенести навыки умершего', 'sources', cid=c.id)]]
         keys += [[self.button(actor, '↻ Обновить', 'character', cid=c.id), self.button(actor, 'К игроку', 'user', user=c.user)]]
-        self.tg.send(actor, character_text(state, c), keys)
+        self.show(actor, (notice + '\n\n' if notice else '') + character_text(state, c), keys)
 
     def skills(self, actor, state, c, page):
         skills = sorted(c.skills.values(), key=lambda s: skill_name(s).casefold())
@@ -188,12 +259,12 @@ class Bot:
         if (page+1)*10 < len(skills):
             keys += [[self.button(actor, 'Далее →', 'skills', cid=c.id, page=page+1)]]
         keys += [[self.button(actor, 'К персонажу', 'character', cid=c.id)]]
-        self.tg.send(actor, '\n'.join(text), keys)
+        self.show(actor, '\n'.join(text), keys)
 
     @staticmethod
     def controllable(state, c):
         if state.version != VERSION:
-            raise ApiError('Версии бота и мода отличаются. Обнови обе части до 1.4.0.')
+            raise ApiError('Версии бота и мода отличаются. Обнови обе части до 1.4.1.')
         if not state.fresh():
             raise ApiError('Сервер не прислал свежий снимок. Управление временно недоступно.')
         if not state.enabled:
@@ -202,11 +273,17 @@ class Bot:
             raise ApiError('Этот персонаж сейчас не в игре.')
 
     def preview(self, actor, state, c, action, arg):
+        self.context[actor] = (state, c)
         self.controllable(state, c)
         text = f'Подтвердить: {ACTIONS[action]}\nИгрок: {c.user}\nПерсонаж: «{c.name}» [№{c.id}]'
-        if action in ('bite', 'cut', 'scratch', 'amputate'):
+        if action in ('bite', 'cut', 'scratch', 'amputate', 'restore'):
             text += '\nЧасть тела: ' + PARTS[arg]
-            if action == 'amputate':
+            if action == 'restore':
+                if c.toc != 'ready' or arg not in restore_parts(c):
+                    raise ApiError('Место ампутации изменилось. Выбери конечность заново.')
+                text += '\nВернётся выбранная часть и части руки ниже неё. Протез на этой руке будет снят и останется в инвентаре.'
+                text += '\nЧерта врождённой ампутации этой руки, если есть, будет удалена. Остальные навыки и другая рука сохраняются.'
+            elif action == 'amputate':
                 text += '\nАмпутация как в админ-меню The Only Cure: без хирургического урона. Отсутствующие части ниже места ампутации учитываются автоматически.'
             else:
                 text += '\nЗаражение определяется механикой раны и настройками сервера.'
@@ -221,7 +298,7 @@ class Bot:
                 raise ApiError('Источник навыков недоступен.')
             text += f'\nИсточник: «{source.name}» [№{source.id}], мёртв.\nСнимок навыков: {date(source.skills_at, state.offset)}'
             text += f'\nУровни и XP {len(source.skills)} навыков будут заменены сохранёнными значениями, включая силу и физподготовку.'
-        self.tg.send(actor, text, [[self.button(actor, '✅ Подтвердить', 'confirm', cid=c.id,
+        self.show(actor, text, [[self.button(actor, '✅ Подтвердить', 'confirm', cid=c.id,
             boot=state.boot, session=c.session, action=action, arg=arg)],
             [self.button(actor, 'Отмена', 'character', cid=c.id)]])
 
@@ -230,7 +307,8 @@ class Bot:
         self.controllable(state, c)
         if state.boot != data['boot'] or c.session != data['session']:
             raise ApiError('Персонаж или сервер сменил сессию. Требуется новое подтверждение.')
-        self.tg.send(actor, 'Запрос отправляется на сервер…')
+        self.context[actor] = (state, c)
+        self.show(actor, f'Запрос отправляется на сервер…\nПерсонаж: «{c.name}» [№{c.id}]')
         argument = data['arg']
         if data['action'] == 'setskill':
             sid, level = argument.rsplit(':', 1)
@@ -238,4 +316,15 @@ class Bot:
         status, code, rid = self.panel.execute(actor, state, c, data['action'], argument)
         title = {'ok': '✅ Выполнено', 'rejected': 'Действие отклонено', 'partial': '⚠️ Результат требует проверки',
                  'unknown': '⚠️ Итог неизвестен'}.get(status, 'Итог неизвестен')
-        self.menu(actor, actor, title + '\n' + REASONS.get(code, code) + '\nЗапрос: ' + rid)
+        notice = title + '\n' + REASONS.get(code, code) + '\nЗапрос: ' + rid
+        self.results[actor] = (c.id, notice)
+        try:
+            latest = self.panel.snapshot()
+            current = latest.chars[c.id]
+        except (ApiError, ValueError, KeyError):
+            # The action already ran. Retain its receipt, never submit it again.
+            import copy
+            latest, current = copy.copy(state), c
+            latest.enabled = False
+            notice += '\nКарточка пока не обновилась. Нажми «Обновить»; действие повторять не нужно.'
+        self.character(actor, latest, current, notice)

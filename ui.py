@@ -27,11 +27,18 @@ SKILLS = {'Fitness': 'Физподготовка', 'Strength': 'Сила', 'Spri
     'Masonry': 'Каменная кладка', 'Blacksmith': 'Кузнечное дело', 'Welding': 'Сварка'}
 ACTIONS = {'heal': 'Полный отхил', 'kill': 'Убить персонажа', 'bite': 'Укус',
     'scratch': 'Царапина', 'cut': 'Рваная рана', 'amputate': 'Ампутация',
+    'restore': 'Восстановить конечность',
     'setskill': 'Изменение навыка', 'transfer': 'Перенос навыков'}
 REASONS = {
     'healed': 'Здоровье восстановлено, клиент подтвердил очистку состояний. Ампутации сохранены.',
     'killed': 'Смерть персонажа подтверждена сервером.',
     'amputated': 'Ампутация подтверждена The Only Cure.',
+    'limb_restored': 'Конечность восстановлена. Сервер и клиент подтвердили результат.',
+    'limb_present': 'Эта конечность уже на месте.',
+    'restore_parent_first': 'Выбери верхнюю точку ампутации: она восстановится вместе с нижними частями руки.',
+    'restore_error': 'Восстановление завершилось не полностью. Проверь персонажа перед повтором.',
+    'restore_not_confirmed': 'Нет полного подтверждения восстановления от клиента. Проверь персонажа и журнал.',
+    'restore_adapter_unavailable': 'Адаптер восстановления несовместим с этой версией The Only Cure.',
     'wound_applied': 'Рана добавлена и отправлена клиенту.',
     'skills_updated': 'Уровни и XP обновлены на сервере.',
     'target_changed': 'Персонаж вышел, умер или сменился. Открой его карточку заново.',
@@ -144,3 +151,25 @@ class Buttons:
         if b['kind'] == 'confirm':
             self.values.pop(key)  # Consume BEFORE any network operation.
         return b
+
+    def retain(self, actor, keys):
+        self.values = {k: v for k, v in self.values.items() if v['actor'] != actor or k in keys}
+
+
+def restore_parts(character):
+    """Only offer the highest missing segment per side: no floating hands."""
+    return [next(p for p in ('UpperArm_' + side, 'ForeArm_' + side, 'Hand_' + side)
+                 if p in character.amputated)
+            for side in ('L', 'R') if any(p.endswith('_' + side) for p in character.amputated)]
+
+
+def text_pages(text, limit=3500):
+    """Stay below Telegram's limit even for supplementary Unicode characters."""
+    pages, lines, size = [], '', 0
+    for line in (text or '—').splitlines(keepends=True):
+        for char in line:
+            units = 2 if ord(char) > 0xffff else 1
+            if size + units > limit:
+                pages.append(lines); lines, size = '', 0
+            lines += char; size += units
+    return pages + ([lines] if lines else [])

@@ -4,7 +4,7 @@ import math
 import time
 import zlib
 
-VERSION = '1.4.0'
+VERSION = '1.4.1'
 MAX_BYTES = 16 * 1024 * 1024
 
 

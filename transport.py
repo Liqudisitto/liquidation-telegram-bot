@@ -16,12 +16,18 @@ class ApiError(RuntimeError):
     pass
 
 
+class TelegramError(ApiError):
+    def __init__(self, reason):
+        self.reason = reason
+        super().__init__('Telegram не выполнил запрос. Открой /menu или попробуй позже.')
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
 
 
-def http(url, body=None, headers=None, timeout=35, cap=MAX_BYTES):
+def http(url, body=None, headers=None, timeout=35, cap=MAX_BYTES, telegram_errors=False):
     req = urllib.request.Request(url, data=body, headers=headers or {})
     try:
         with urllib.request.build_opener(NoRedirect()).open(req, timeout=timeout) as response:
@@ -30,6 +36,13 @@ def http(url, body=None, headers=None, timeout=35, cap=MAX_BYTES):
                 raise ApiError('Ответ сервиса превышает допустимый размер.')
             return data
     except urllib.error.HTTPError as error:
+        if telegram_errors and error.code == 400:
+            # Telegram describes edit errors in a JSON body even on HTTP 400.
+            # Only Telegram.call classifies it; the body never enters a log.
+            with error:
+                data = error.read(cap + 1)
+            if len(data) <= cap:
+                return data
         if error.code == 404:
             raise ApiError('HTTP 404: проверь адрес панели, Server ID и путь к файлам мода.') from None
         if error.code in (401, 403):
@@ -98,7 +111,7 @@ class Panel:
             except (ApiError, ProtocolError) as error:
                 errors.append(str(error))
         if not found:
-            raise ApiError(errors[0] + ' Мод 1.4.0 должен быть запущен на игровом сервере.')
+            raise ApiError(errors[0] + ' Мод 1.4.1 должен быть запущен на игровом сервере.')
         return max(found, key=lambda x: x.stamp)
 
     def execute(self, actor, state, character, action, argument):
@@ -135,25 +148,31 @@ class Telegram:
     def call(self, method, **data):
         try:
             result = json.loads(http(self.base + method,
-                json.dumps(data, ensure_ascii=False).encode(), {'Content-Type': 'application/json'}, timeout=35))
+                json.dumps(data, ensure_ascii=False).encode(), {'Content-Type': 'application/json'},
+                timeout=35, telegram_errors=True))
         except (ValueError, UnicodeError):
             raise ApiError('Некорректный ответ Telegram.') from None
         if not result.get('ok'):
-            raise ApiError('Telegram не выполнил запрос.')
+            description = str(result.get('description', '')).lower()
+            reason = 'failed'
+            if result.get('error_code') == 400:
+                if 'message is not modified' in description:
+                    reason = 'not_modified'
+                elif 'message to edit not found' in description or "message can't be edited" in description:
+                    reason = 'not_editable'
+            raise TelegramError(reason)
         return result.get('result')
 
     def send(self, chat, text, buttons=None):
-        # Plain text avoids Markdown/HTML injection from game names.
-        chunks = []
-        for line in text.splitlines(keepends=True):
-            while len(line) > 3500:
-                chunks.append(line[:3500]); line = line[3500:]
-            if chunks and len(chunks[-1]) + len(line) <= 3500:
-                chunks[-1] += line
-            else:
-                chunks.append(line)
-        for i, chunk in enumerate(chunks or ['—']):
-            args = {'chat_id': chat, 'text': chunk}
-            if i == len(chunks) - 1 and buttons:
-                args['reply_markup'] = {'inline_keyboard': buttons}
-            self.call('sendMessage', **args)
+        # The UI paginates first. Plain text avoids markup injection by names.
+        return self.call('sendMessage', chat_id=chat, text=text or '—',
+                         reply_markup={'inline_keyboard': buttons or []})
+
+    def edit(self, chat, message_id, text, buttons=None):
+        try:
+            return self.call('editMessageText', chat_id=chat, message_id=message_id,
+                text=text or '—', reply_markup={'inline_keyboard': buttons or []})
+        except TelegramError as error:
+            if error.reason == 'not_modified':
+                return {'message_id': message_id}
+            raise
