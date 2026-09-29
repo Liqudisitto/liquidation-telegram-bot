@@ -13,6 +13,8 @@ PARTS = {
     'Foot_L': 'Левая стопа', 'Foot_R': 'Правая стопа',
 }
 LIMBS = ('Hand_L', 'ForeArm_L', 'UpperArm_L', 'Hand_R', 'ForeArm_R', 'UpperArm_R')
+CU_LIMBS = ('Hand_L', 'ForeArm_L', 'UpperArm_L', 'Hand_R', 'ForeArm_R', 'UpperArm_R',
+            'Foot_L', 'LowerLeg_L', 'UpperLeg_L', 'Foot_R', 'LowerLeg_R', 'UpperLeg_R')
 SKILLS = {'Fitness': 'Физподготовка', 'Strength': 'Сила', 'Sprinting': 'Бег',
     'Lightfoot': 'Лёгкий шаг', 'Nimble': 'Проворность', 'Sneak': 'Скрытность',
     'Axe': 'Топоры', 'Blunt': 'Длинное дробящее', 'SmallBlunt': 'Короткое дробящее',
@@ -26,13 +28,18 @@ SKILLS = {'Fitness': 'Физподготовка', 'Strength': 'Сила', 'Spri
     'Tracking': 'Выслеживание', 'Pottery': 'Гончарное дело', 'Glassmaking': 'Стеклоделие',
     'Masonry': 'Каменная кладка', 'Blacksmith': 'Кузнечное дело', 'Welding': 'Сварка'}
 ACTIONS = {'heal': 'Полный отхил', 'kill': 'Убить персонажа', 'bite': 'Укус',
-    'scratch': 'Царапина', 'cut': 'Рваная рана', 'amputate': 'Ампутация',
+    'scratch': 'Царапина', 'cut': 'Рваная рана', 'deep': 'Глубокая рана', 'amputate': 'Ампутация',
     'restore': 'Восстановить конечность',
     'setskill': 'Изменение навыка', 'transfer': 'Перенос навыков'}
 REASONS = {
     'healed': 'Здоровье восстановлено, клиент подтвердил очистку состояний. Ампутации сохранены.',
     'killed': 'Смерть персонажа подтверждена сервером.',
-    'amputated': 'Ампутация подтверждена The Only Cure.',
+    'amputated': 'Ампутация подтверждена.',
+    'amputated_cu': 'Ампутация подтверждена Casualties Undead.',
+    'cu_unavailable': 'Casualties Undead не установлен или не загрузил API.',
+    'cu_not_ready': 'Casualties Undead ещё не загрузил данные конечностей.',
+    'cu_amputation_error': 'Casualties Undead не подтвердил ампутацию; проверь персонажа.',
+    'cu_not_confirmed': 'Casualties Undead не подтвердил ампутацию; проверь персонажа.',
     'limb_restored': 'Конечность восстановлена. Сервер и клиент подтвердили результат.',
     'limb_present': 'Эта конечность уже на месте.',
     'restore_parent_first': 'Выбери верхнюю точку ампутации: она восстановится вместе с нижними частями руки.',
@@ -48,7 +55,7 @@ REASONS = {
     'journal_unavailable': 'Сервер не может надёжно записать журнал. Команды заблокированы.',
     'save_unavailable': 'Не удалось сохранить статистику перед действием.',
     'target_godmode': 'У персонажа включено бессмертие. Сначала отключи его в игре.',
-    'toc_not_ready': 'The Only Cure не установлен или ещё не загрузил данные персонажа.',
+    'toc_not_ready': 'The Only Cure/Casualties Undead не установлен или ещё не загрузил данные персонажа.',
     'limb_missing': 'Эта часть тела уже ампутирована.',
     'source_not_dead_same_user': 'Источник должен быть умершим персонажем того же игрока.',
     'source_skills_unknown': 'У этого умершего персонажа нет сохранённой записи навыков.',
@@ -110,7 +117,11 @@ WOUNDS = {'bite': 'укус', 'scratch': 'царапина', 'cut': 'рвана�
     'bleeding': 'кровотечение', 'burn': 'ожог', 'fracture': 'перелом', 'bullet': 'пуля в теле',
     'glass': 'осколок стекла', 'infected': 'инфекция раны', 'bandaged': 'повязка', 'stitched': 'швы'}
 TOWNS = {'Muldraugh': 'Малдро', 'Rosewood': 'Роузвуд', 'Riverside': 'Риверсайд',
-    'WestPoint': 'Вест-Пойнт', 'MarchRidge': 'Марч-Ридж', 'Louisville': 'Луисвилл'}
+    'WestPoint': 'Вест-Пойнт', 'MarchRidge': 'Марч-Ридж', 'Louisville': 'Луисвилл',
+    'Brandenburg': 'Бранденбург', 'EchoCreek': 'Эхо-Крик', 'Echo Creek': 'Эхо-Крик',
+    'FallAsLake': 'Фаллас-Лейк', 'FallasLake': 'Фаллас-Лейк',
+    'ValleyStation': 'Вэлли-Стейшн', 'LouisvilleAirport': 'Аэропорт Луисвилла',
+    'Louisville Airport': 'Аэропорт Луисвилла'}
 
 
 def death_lines(d, offset):
@@ -156,9 +167,19 @@ def character_text(state, c, dates=True):
                      '  Реальное: ' + date(c.died_real, state.offset)]
             text += death_lines(c.death, state.offset)
     if c.toc == 'ready':
-        text += ['Ампутации: ' + (', '.join(PARTS.get(p, p) for p in LIMBS if p in c.amputated) or 'нет')]
+        text += ['The Only Cure: установлен', 'Ампутации The Only Cure: ' +
+                 (', '.join(PARTS.get(p, p) for p in LIMBS if p in c.amputated) or 'нет')]
+    elif c.toc == 'absent':
+        text += ['The Only Cure: не установлен']
     else:
-        text += ['The Only Cure: ' + ('не установлен' if c.toc == 'absent' else 'данные пока недоступны')]
+        text += ['The Only Cure: данные пока недоступны']
+    if c.cu == 'ready':
+        text += ['Casualties Undead: установлен', 'Ампутации Casualties Undead: ' +
+                 (', '.join(PARTS.get(p, p) for p in CU_LIMBS if p in c.cu_amputated) or 'нет')]
+    elif c.cu == 'pending':
+        text += ['Casualties Undead: данные пока недоступны']
+    else:
+        text += ['Casualties Undead: не установлен']
     if c.observed:
         text += ['Показатели записаны: ' + date(c.observed, state.offset)]
     if not state.fresh():

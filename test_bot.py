@@ -4,26 +4,34 @@ import unittest
 from unittest.mock import patch
 from bot import Bot
 from protocol import Character, ProtocolError, Skill, Snapshot, frame, rows, snapshot
-from transport import Config, Panel, ApiError, NoRedirect
+from transport import Config, Panel, ApiError, NoRedirect, Telegram, TelegramError
 from ui import Buttons, duration
 
 
-class FakeTelegram:
+class FakeTelegram(Telegram):
     def __init__(self):
-        self.sent = []
-        self.calls = []
+        self.sent, self.calls, self.history = [], [], []
+        self.messages = {}
+        self.next_id = 10
 
-    def send(self, *a):
-        self.sent.append(a)
-
-    def call(self, *a, **k):
-        self.calls.append((a, k))
+    def call(self, method, **data):
+        self.calls.append((method, data))
+        if method == 'sendMessage':
+            mid = self.next_id; self.next_id += 1
+            self.sent.append(mid)
+        elif method == 'editMessageText':
+            mid = data['message_id']
+        else:
+            return True
+        self.messages[mid] = data
+        self.history.append((data['chat_id'], data['text'], data['reply_markup']['inline_keyboard']))
+        return {'message_id': mid}
 
 
 class FakePanel:
     def __init__(self):
         stamp = int(time.time()*1000)
-        self.state = Snapshot('boot-1', stamp, 742310000, '1.4.0', 180, True, '2026-09-28', {})
+        self.state = Snapshot('boot-1', stamp, 742310000, '1.4.2.6.9', 180, True, '2026-09-28', {})
         c = Character(1, 'User', 'Живой <персонаж>', stamp, 742310000, stamp, 742310000, -1, -1, 10000, 10000, 'session-1')
         c.skills = {'Woodwork': Skill('Woodwork', 'Carpentry', 3, 940.25)}
         c.skills_at = stamp
@@ -48,11 +56,11 @@ class BotTests(unittest.TestCase):
 
     def callback(self, key, user=123, chat_type='private'):
         self.bot.update({'callback_query': {'id': 'call', 'from': {'id': user}, 'data': key,
-            'message': {'chat': {'id': user, 'type': chat_type}}}})
+            'message': {'message_id': self.bot.messages.get(user, 10), 'chat': {'id': user, 'type': chat_type}}}})
 
     def confirm_button(self, action='kill', arg='-'):
         self.bot.preview(123, self.panel.state, self.panel.state.chars[1], action, arg)
-        return self.tg.sent[-1][2][0][0]['callback_data']
+        return self.tg.history[-1][2][0][0]['callback_data']
 
     def test_unauthorized_actor_never_reads_game_data(self):
         self.bot.update({'message': {'from': {'id': 999}, 'chat': {'id': 999, 'type': 'private'}, 'text': '/start'}})
@@ -109,7 +117,7 @@ class BotTests(unittest.TestCase):
     def test_myid_works_before_allowlist_setup_without_panel_access(self):
         self.config.admins.clear()
         self.bot.update({'message': {'from': {'id': 123}, 'chat': {'id': 123, 'type': 'private'}, 'text': '/myid'}})
-        self.assertIn('123', self.tg.sent[-1][1])
+        self.assertIn('123', self.tg.history[-1][1])
         self.assertEqual(self.panel.reads, 0)
 
     def test_expired_buttons_and_new_bot_instance_cannot_replay(self):
@@ -125,13 +133,13 @@ class BotTests(unittest.TestCase):
 
 class TransportTests(unittest.TestCase):
     def test_partial_snapshot_fails_checksum(self):
-        msg=frame([['LPRS1','boot',1,2,'1.4.0',180,1,'2026-09-28']])
+        msg=frame([['LPRS1','boot',1,2,'1.4.2.6.9',180,1,'2026-09-28']])
         with self.assertRaises(ProtocolError):
             rows(msg[:-4])
 
     def test_snapshot_decodes_cyrillic_without_markup_evaluation(self):
         h=lambda s: s.encode().hex()
-        data=frame([['LPRS1','boot',1,2,'1.4.0',180,1,'2026-09-28'],
+        data=frame([['LPRS1','boot',1,2,'1.4.2.6.9',180,1,'2026-09-28'],
             ['C',1,h('Игрок'),h('Имя <&>'),0,0,-1,-1,-1,-1,20,10,'sid'],
             ['E',1,1,12,100000,'ready',h('Hand_L'),1],
             ['K',1,h('Woodwork'),h('Строительство'),3,940.25]])
@@ -154,7 +162,7 @@ class TransportTests(unittest.TestCase):
 
     def test_corrupt_snapshot_slot_uses_other_complete_slot(self):
         panel=Panel(Config('unused',set(),'https://example.test','12345678','private'))
-        data=frame([['LPRS1','boot',1,2,'1.4.0',180,1,'2026-09-28']])
+        data=frame([['LPRS1','boot',1,2,'1.4.2.6.9',180,1,'2026-09-28']])
         panel.call_file=lambda slot: data[:-5] if slot.endswith('a') else data
         self.assertEqual(panel.snapshot().boot,'boot')
 

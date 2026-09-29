@@ -73,7 +73,7 @@ class Bot:
             [self.button(actor, '🟢 Онлайн', 'users', online=True), self.button(actor, '📊 Все игроки', 'users')],
             [self.button(actor, '📅 Время за сегодня', 'users', today_only=True)],
             [self.button(actor, '📋 Журнал операций', 'journal')],
-            [self.button(actor, 'Ликвидус', 'host')]])
+            [self.button(actor, 'Управление сервером', 'host')]])
 
     def host_menu(self, actor, notice=None):
         self.context.pop(actor, None)
@@ -88,11 +88,11 @@ class Bot:
         except ApiError as error:
             label = 'не удалось получить — ' + str(error)
         titles = [('save', 'Сохранение мира'), ('check', 'Проверка апдейтов'),
-                  ('restart', 'Перезапуск Ликвидуса'), ('stop', 'Выключение Ликвидуса'),
-                  ('start', 'Включение Ликвидуса')]
+                  ('restart', 'Перезапуск сервера'), ('stop', 'Выключение сервера'),
+                  ('start', 'Включение сервера')]
         keys = [[self.button(actor, title, 'hostpreview', action=action, label=title)] for action, title in titles]
         keys += [[self.button(actor, '↻ Обновить состояние', 'host')], [self.button(actor, 'Главное меню', 'menu')]]
-        self.show(actor, (notice + '\n\n' if notice else '') + 'Ликвидус\nСостояние панели: ' + label +
+        self.show(actor, (notice + '\n\n' if notice else '') + 'Управление сервером\nСостояние панели: ' + label +
                   '\nУправление доступно и при выключенной игре. Проверка апдейтов проверяет моды Workshop.', keys)
 
     def host_preview(self, actor, data):
@@ -106,7 +106,7 @@ class Bot:
             'check': 'Запросить проверку обновлений модов Steam Workshop? Результат будет в консоли и игровом чате.',
             'restart': 'Перезапустить сервер сейчас через панель? Игроки будут отключены. Пятиминутного отсчёта watchdog здесь нет.',
             'stop': 'Выключить сервер сейчас через обычную остановку панели? Игроки будут отключены.',
-            'start': 'Включить Ликвидус через панель EGNetwork?'}
+            'start': 'Включить сервер через панель EGNetwork?'}
         self.show(actor, data['label'] + '\n' + notes[data['action']], [
             [self.button(actor, '✅ Подтвердить', 'hostconfirm', action=data['action'], label=data['label'],
                          preview=status, offered=time.monotonic())],
@@ -114,7 +114,7 @@ class Bot:
 
     def host_confirm(self, actor, data):
         if not 0 <= time.monotonic() - data['offered'] <= 60:
-            raise ApiError('Подтверждение устарело. Выбери действие Ликвидуса заново.')
+            raise ApiError('Подтверждение устарело. Выбери действие управления сервером заново.')
         self.show(actor, 'Отправляю запрос: ' + data['label'] + '…')
         result = self.panel.host_action(actor, data['action'], data['preview'])
         self.host_results[actor] = data['label'] + '\n' + result
@@ -242,9 +242,18 @@ class Bot:
             elif kind == 'parts':
                 self.controllable(state, c)
                 action = data['action']
-                parts = restore_parts(c) if action == 'restore' else LIMBS if action == 'amputate' else PARTS.keys()
+                if action == 'restore':
+                    parts = restore_parts(c)
+                elif action == 'amputate':
+                    cu_limbs = ('Hand_L','ForeArm_L','UpperArm_L','Hand_R','ForeArm_R','UpperArm_R',
+                                'Foot_L','LowerLeg_L','UpperLeg_L','Foot_R','LowerLeg_R','UpperLeg_R')
+                    parts = list(dict.fromkeys(
+                        ([p for p in LIMBS if p not in c.amputated] if c.toc == 'ready' else []) +
+                        ([p for p in cu_limbs if p not in c.cu_amputated] if c.cu == 'ready' else [])))
+                else:
+                    parts = PARTS.keys()
                 buttons = [self.button(actor, PARTS[p], 'preview', cid=c.id, action=action, arg=p)
-                    for p in parts if action == 'restore' or not (c.toc == 'ready' and p in c.amputated)]
+                    for p in parts if action == 'restore' or not ((c.toc == 'ready' and p in c.amputated) or (c.cu == 'ready' and p in c.cu_amputated))]
                 self.show(actor, f'{ACTIONS[action]} — выбери часть тела «{c.name}»:' if buttons else 'Нет подходящих частей тела.',
                              [buttons[i:i+2] for i in range(0, len(buttons), 2)] + [self.character_back(actor, c)])
             elif kind == 'sources':
@@ -298,10 +307,10 @@ class Bot:
         if c.online and state.fresh() and state.enabled:
             keys += [[self.button(actor, '💚 Отхил', 'preview', cid=c.id, action='heal'),
                       self.button(actor, '💀 Убить', 'preview', cid=c.id, action='kill')]]
-            keys += [[self.button(actor, ACTIONS[a], 'parts', cid=c.id, action=a)] for a in ('bite', 'cut', 'scratch')]
-            if c.toc == 'ready':
+            keys += [[self.button(actor, ACTIONS[a], 'parts', cid=c.id, action=a)] for a in ('bite', 'cut', 'scratch', 'deep')]
+            if c.toc == 'ready' or c.cu == 'ready':
                 keys += [[self.button(actor, 'Ампутация', 'parts', cid=c.id, action='amputate')]]
-                if c.amputated:
+                if c.amputated and c.toc == 'ready':
                     keys += [[self.button(actor, '🦾 Вернуть конечность', 'parts', cid=c.id, action='restore')]]
             keys += [[self.button(actor, 'Перенести навыки умершего', 'sources', cid=c.id)]]
         keys += [[self.button(actor, '↻ Обновить', 'character', cid=c.id), self.button(actor, 'К игроку', 'user', user=c.user)]]
@@ -339,7 +348,7 @@ class Bot:
         self.context[actor] = (state, c)
         self.controllable(state, c)
         text = f'Подтвердить: {ACTIONS[action]}\nИгрок: {c.user}\nПерсонаж: «{c.name}» [№{c.id}]'
-        if action in ('bite', 'cut', 'scratch', 'amputate', 'restore'):
+        if action in ('bite', 'cut', 'scratch', 'deep', 'amputate', 'restore'):
             text += '\nЧасть тела: ' + PARTS[arg]
             if action == 'restore':
                 if c.toc != 'ready' or arg not in restore_parts(c):
@@ -347,7 +356,7 @@ class Bot:
                 text += '\nВернётся выбранная часть и части руки ниже неё. Протез на этой руке будет снят и останется в инвентаре.'
                 text += '\nЧерта врождённой ампутации этой руки, если есть, будет удалена. Остальные навыки и другая рука сохраняются.'
             elif action == 'amputate':
-                text += '\nАмпутация как в админ-меню The Only Cure: без хирургического урона. Отсутствующие части ниже места ампутации учитываются автоматически.'
+                text += '\nАмпутация через доступный мод (The Only Cure или Casualties Undead); отсутствующие части ниже места ампутации учитываются автоматически.'
             else:
                 text += '\nЗаражение определяется механикой раны и настройками сервера.'
         elif action == 'heal':
@@ -391,3 +400,4 @@ class Bot:
             latest.enabled = False
             notice += '\nКарточка пока не обновилась. Нажми «Обновить»; действие повторять не нужно.'
         self.character(actor, latest, current, notice)
+

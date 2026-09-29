@@ -118,6 +118,8 @@ class Character:
     health: int = -1
     toc: str = 'pending'
     amputated: set = field(default_factory=set)
+    cu: str = 'absent'
+    cu_amputated: set = field(default_factory=set)
     skills_at: int = 0
     skills: dict = field(default_factory=dict)
     death: Death | None = None
@@ -166,12 +168,15 @@ def snapshot(data):
                 if c.alive or c.death is not None:
                     raise ValueError()
                 c.death = death_row(a)
-            elif a[0] == 'E' and len(a) == 8:
+            elif a[0] == 'E' and len(a) in (8, 10):
                 c = out.chars[int(a[1])]
                 c.observed, c.kills, c.health = map(int, a[2:5])
                 c.toc = a[5]
                 c.amputated = set(filter(None, unhex(a[6]).split(',')))
                 c.skills_at = int(a[7])
+                if len(a) == 10:
+                    c.cu = a[8] if a[8] in ('absent', 'pending', 'ready') else 'pending'
+                    c.cu_amputated = set(filter(None, unhex(a[9]).split(',')))
             elif a[0] == 'K' and len(a) == 6:
                 c = out.chars[int(a[1])]
                 s = Skill(unhex(a[2]), unhex(a[3]), int(a[4]), float(a[5]))
