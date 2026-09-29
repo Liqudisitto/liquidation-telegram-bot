@@ -103,6 +103,43 @@ def skill_name(s):
     return SKILLS.get(s.id, s.name or s.id)
 
 
+CAUSES = {'unknown': 'не установлена', 'admin_kill': 'убийство через Telegram-бота',
+    'knox': 'Нокс-вирус', 'bleeding': 'кровотечение от ран',
+    'blood_loss': 'тяжёлая кровопотеря (Wounds Overhaul)', 'sepsis': 'сепсис (Wounds Overhaul)', 'fire': 'огонь / ожоги'}
+WOUNDS = {'bite': 'укус', 'scratch': 'царапина', 'cut': 'рваная рана', 'deep': 'глубокая рана',
+    'bleeding': 'кровотечение', 'burn': 'ожог', 'fracture': 'перелом', 'bullet': 'пуля в теле',
+    'glass': 'осколок стекла', 'infected': 'инфекция раны', 'bandaged': 'повязка', 'stitched': 'швы'}
+TOWNS = {'Muldraugh': 'Малдро', 'Rosewood': 'Роузвуд', 'Riverside': 'Риверсайд',
+    'WestPoint': 'Вест-Пойнт', 'MarchRidge': 'Марч-Ридж', 'Louisville': 'Луисвилл'}
+
+
+def death_lines(d, offset):
+    if d is None:
+        return ['Обстоятельства смерти: не записаны (смерть до обновления или нет данных).']
+    cause = '; '.join(CAUSES.get(c, c) for c in d.cause.split(','))
+    title = 'Причина смерти (предположительно): ' if d.certainty == 'probable' else 'Причина смерти: '
+    lines = [title + cause]
+    if d.certainty == 'probable':
+        lines += ['Вывод по последнему состоянию; игра не подтвердила точную причину.']
+    lines += ['Город смерти: ' + ('район ' + TOWNS.get(d.town, d.town) + ' (по области карты)' if d.town else 'не определён')]
+    lines += ['Координаты смерти: ' + (f'X={d.position[0]}, Y={d.position[1]}, Z={d.position[2]}' if d.position is not None else 'не получены')]
+    lines += ['Последние зарегистрированные раны:']
+    for part in PARTS:
+        if part in d.wounds:
+            lines += ['  ' + PARTS[part] + ': ' + ', '.join(WOUNDS[f] for f in d.wounds[part])]
+    if not d.wounds:
+        lines += ['  Не обнаружены в снимке.' if d.known else '  Сведения не получены.']
+    elif not d.known:
+        lines += ['  Список неполный: часть показателей недоступна.']
+    source = {'client': 'клиент игрока', 'server': 'сервер (данные могут быть неполными)', 'unknown': 'неизвестен'}[d.source]
+    lines += ['Источник состояния: ' + source + '.', 'Снимок получен: ' + date(d.observed, offset)]
+    if d.phase == 'stale':
+        lines += ['Снимок устарел: раны могли измениться до смерти; причина по нему не определяется.']
+    elif d.phase == 'recent':
+        lines += ['Состояние незадолго до смерти; последняя рана могла не попасть в снимок.']
+    return lines
+
+
 def character_text(state, c, dates=True):
     status = 'жив' if c.alive else 'мёртв'
     text = [f'Персонаж «{c.name}» [№{c.id}] — {status}', f'Игрок: {c.user}',
@@ -117,6 +154,7 @@ def character_text(state, c, dates=True):
         else:
             text += ['Смерть:', '  Игровое: ' + date(c.died_game, real=False),
                      '  Реальное: ' + date(c.died_real, state.offset)]
+            text += death_lines(c.death, state.offset)
     if c.toc == 'ready':
         text += ['Ампутации: ' + (', '.join(PARTS.get(p, p) for p in LIMBS if p in c.amputated) or 'нет')]
     else:
@@ -148,7 +186,7 @@ class Buttons:
         b = self.values.get(key)
         if not b or b['actor'] != actor or b['expires'] <= self.clock():
             return None
-        if b['kind'] == 'confirm':
+        if b['kind'] in ('confirm', 'hostconfirm'):
             self.values.pop(key)  # Consume BEFORE any network operation.
         return b
 

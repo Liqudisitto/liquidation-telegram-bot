@@ -4,7 +4,7 @@ import math
 import time
 import zlib
 
-VERSION = '1.4.1'
+VERSION = '1.4.2.6.9'
 MAX_BYTES = 16 * 1024 * 1024
 
 
@@ -47,6 +47,58 @@ class Skill:
     xp: float
 
 
+DEATH_PARTS = ('Hand_L', 'Hand_R', 'ForeArm_L', 'ForeArm_R', 'UpperArm_L', 'UpperArm_R',
+    'Torso_Upper', 'Torso_Lower', 'Head', 'Neck', 'Groin', 'UpperLeg_L', 'UpperLeg_R',
+    'LowerLeg_L', 'LowerLeg_R', 'Foot_L', 'Foot_R')
+WOUND_FLAGS = ('bite', 'scratch', 'cut', 'deep', 'bleeding', 'burn', 'fracture', 'bullet',
+               'glass', 'infected', 'bandaged', 'stitched')
+DEATH_CAUSES = ('unknown', 'admin_kill', 'knox', 'bleeding', 'blood_loss', 'sepsis', 'fire')
+
+
+@dataclass
+class Death:
+    observed: int
+    source: str
+    phase: str
+    cause: str
+    certainty: str
+    position: tuple | None
+    town: str
+    known: bool
+    wounds: dict
+
+
+def death_row(a):
+    if len(a) != 13 or a[0] != 'F':
+        raise ValueError()
+    observed = int(a[2])
+    if not 0 <= observed <= 9007199254740991 or a[3] not in ('client', 'server', 'unknown') or a[4] not in ('final', 'recent', 'stale', 'unavailable'):
+        raise ValueError()
+    causes = a[5].split(',')
+    if (len(set(causes)) != len(causes) or any(c not in DEATH_CAUSES for c in causes)
+            or a[6] not in ('unknown', 'probable', 'confirmed') or a[11] not in ('0', '1')):
+        raise ValueError()
+    if ((a[5] == 'unknown') != (a[6] == 'unknown') or (a[5] == 'admin_kill') != (a[6] == 'confirmed')
+            or ('unknown' in causes and a[5] != 'unknown') or ('admin_kill' in causes and a[5] != 'admin_kill')):
+        raise ValueError()
+    position = None
+    if a[7:10] != ['-', '-', '-']:
+        position = tuple(map(int, a[7:10]))
+        if any(abs(n) > 10000000 for n in position[:2]) or abs(position[2]) > 100:
+            raise ValueError()
+    town, raw = unhex(a[10]), unhex(a[12])
+    if len(town.encode('utf-8')) > 128 or len(raw) > 2600:
+        raise ValueError()
+    wounds = {}
+    for line in raw.split('|') if raw else []:
+        part, flags = line.split('=')
+        values = flags.split(',')
+        if part not in DEATH_PARTS or part in wounds or len(set(values)) != len(values) or any(f not in WOUND_FLAGS for f in values):
+            raise ValueError()
+        wounds[part] = values
+    return Death(observed, a[3], a[4], a[5], a[6], position, town, a[11] == '1', wounds)
+
+
 @dataclass
 class Character:
     id: int
@@ -68,6 +120,7 @@ class Character:
     amputated: set = field(default_factory=set)
     skills_at: int = 0
     skills: dict = field(default_factory=dict)
+    death: Death | None = None
 
     @property
     def alive(self):
@@ -108,6 +161,11 @@ def snapshot(data):
                     raise ValueError()
                 out.chars[cid] = Character(cid, unhex(a[2]), unhex(a[3]),
                     *map(int, a[4:12]), a[12])
+            elif a[0] == 'F':
+                c = out.chars[int(a[1])]
+                if c.alive or c.death is not None:
+                    raise ValueError()
+                c.death = death_row(a)
             elif a[0] == 'E' and len(a) == 8:
                 c = out.chars[int(a[1])]
                 c.observed, c.kills, c.health = map(int, a[2:5])

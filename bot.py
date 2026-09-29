@@ -1,4 +1,5 @@
 import shlex
+import time
 from protocol import VERSION
 from transport import ApiError, TelegramError
 from ui import ACTIONS, LIMBS, PARTS, REASONS, Buttons, character_text, date, duration, skill_name, today, restore_parts, text_pages
@@ -13,6 +14,7 @@ class Bot:
         self.config, self.tg, self.panel = config, telegram, panel
         self.buttons = Buttons()
         self.messages, self.context, self.results = {}, {}, {}
+        self.host_context, self.host_results = set(), {}
 
     def button(self, actor, text, kind, **data):
         return self.buttons.add(actor, text, kind, **data)
@@ -54,6 +56,9 @@ class Bot:
         return [self.button(actor, 'К персонажу', 'character', cid=c.id)]
 
     def problem(self, actor, message):
+        if actor in self.host_context:
+            self.host_menu(actor, message)
+            return
         context = self.context.get(actor)
         if context:
             state, c = context
@@ -61,12 +66,59 @@ class Bot:
         else:
             self.menu(actor, actor, message)
 
-    def menu(self, actor, chat, text='Liquidation 1.4.1 — управление сервером'):
+    def menu(self, actor, chat, text='Liquidation 1.4.2.6.9 — управление сервером'):
         self.context.pop(actor, None)
+        self.host_context.discard(actor)
         self.show(chat, text, [
             [self.button(actor, '🟢 Онлайн', 'users', online=True), self.button(actor, '📊 Все игроки', 'users')],
             [self.button(actor, '📅 Время за сегодня', 'users', today_only=True)],
-            [self.button(actor, '📋 Журнал операций', 'journal')]])
+            [self.button(actor, '📋 Журнал операций', 'journal')],
+            [self.button(actor, 'Ликвидус', 'host')]])
+
+    def host_menu(self, actor, notice=None):
+        self.context.pop(actor, None)
+        self.host_context.add(actor)
+        notice = notice if notice is not None else self.host_results.get(actor, '')
+        try:
+            status = self.panel.api('resources')
+            label = {'running': 'запущен', 'offline': 'выключен', 'starting': 'запускается',
+                     'stopping': 'выключается'}[status['state']]
+            if status['suspended']:
+                label += '; приостановлен хостингом'
+        except ApiError as error:
+            label = 'не удалось получить — ' + str(error)
+        titles = [('save', 'Сохранение мира'), ('check', 'Проверка апдейтов'),
+                  ('restart', 'Перезапуск Ликвидуса'), ('stop', 'Выключение Ликвидуса'),
+                  ('start', 'Включение Ликвидуса')]
+        keys = [[self.button(actor, title, 'hostpreview', action=action, label=title)] for action, title in titles]
+        keys += [[self.button(actor, '↻ Обновить состояние', 'host')], [self.button(actor, 'Главное меню', 'menu')]]
+        self.show(actor, (notice + '\n\n' if notice else '') + 'Ликвидус\nСостояние панели: ' + label +
+                  '\nУправление доступно и при выключенной игре. Проверка апдейтов проверяет моды Workshop.', keys)
+
+    def host_preview(self, actor, data):
+        self.context.pop(actor, None)
+        self.host_context.add(actor)
+        self.panel.host_allowed(actor)
+        status = self.panel.api('resources')
+        self.panel.host_ready(data['action'], status)
+        notes = {
+            'save': 'Передать команду сохранения текущего мира в консоль?',
+            'check': 'Запросить проверку обновлений модов Steam Workshop? Результат будет в консоли и игровом чате.',
+            'restart': 'Перезапустить сервер сейчас через панель? Игроки будут отключены. Пятиминутного отсчёта watchdog здесь нет.',
+            'stop': 'Выключить сервер сейчас через обычную остановку панели? Игроки будут отключены.',
+            'start': 'Включить Ликвидус через панель EGNetwork?'}
+        self.show(actor, data['label'] + '\n' + notes[data['action']], [
+            [self.button(actor, '✅ Подтвердить', 'hostconfirm', action=data['action'], label=data['label'],
+                         preview=status, offered=time.monotonic())],
+            [self.button(actor, 'Отмена', 'host')]])
+
+    def host_confirm(self, actor, data):
+        if not 0 <= time.monotonic() - data['offered'] <= 60:
+            raise ApiError('Подтверждение устарело. Выбери действие Ликвидуса заново.')
+        self.show(actor, 'Отправляю запрос: ' + data['label'] + '…')
+        result = self.panel.host_action(actor, data['action'], data['preview'])
+        self.host_results[actor] = data['label'] + '\n' + result
+        self.host_menu(actor)
 
     def update(self, update):
         callback = update.get('callback_query')
@@ -112,7 +164,7 @@ class Bot:
             raise ApiError('Закрой кавычки вокруг имени пользователя.') from None
         cmd = args[0].split('@')[0].lower() if args else ''
         if cmd in ('/start', '/menu', '/help'):
-            self.menu(actor, actor, 'Liquidation 1.4.1\nВыбери игрока и персонажа кнопками.\n'
+            self.menu(actor, actor, 'Liquidation 1.4.2.6.9\nВыбери игрока и персонажа кнопками.\n'
                 '/player "Имя пользователя" — карточка\n/totaltime "Имя пользователя" — всё время\n'
                 '/todaytime "Имя пользователя" — сегодня\n/myid — твой Telegram ID')
         elif cmd in ('/player', '/stats', '/totaltime', '/todaytime') and len(args) >= 2:
@@ -132,6 +184,16 @@ class Bot:
         if kind == 'menu':
             self.menu(actor, actor)
             return
+        if kind == 'host':
+            self.host_menu(actor)
+            return
+        if kind == 'hostpreview':
+            self.host_preview(actor, data)
+            return
+        if kind == 'hostconfirm':
+            self.host_confirm(actor, data)
+            return
+        self.host_context.discard(actor)
         if kind == 'journal':
             journal = self.panel.journal()
             lines = ['Последние операции:']
@@ -243,6 +305,7 @@ class Bot:
                     keys += [[self.button(actor, '🦾 Вернуть конечность', 'parts', cid=c.id, action='restore')]]
             keys += [[self.button(actor, 'Перенести навыки умершего', 'sources', cid=c.id)]]
         keys += [[self.button(actor, '↻ Обновить', 'character', cid=c.id), self.button(actor, 'К игроку', 'user', user=c.user)]]
+        keys += [[self.button(actor, 'Главное меню', 'menu')]]
         self.show(actor, (notice + '\n\n' if notice else '') + character_text(state, c), keys)
 
     def skills(self, actor, state, c, page):
@@ -264,7 +327,7 @@ class Bot:
     @staticmethod
     def controllable(state, c):
         if state.version != VERSION:
-            raise ApiError('Версии бота и мода отличаются. Обнови обе части до 1.4.1.')
+            raise ApiError('Версии бота и мода отличаются. Обнови обе части до 1.4.2.6.9.')
         if not state.fresh():
             raise ApiError('Сервер не прислал свежий снимок. Управление временно недоступно.')
         if not state.enabled:

@@ -31,7 +31,7 @@ class FakeTelegram(Telegram):
 class FakePanel:
     def __init__(self):
         stamp = int(time.time()*1000)
-        self.state = Snapshot('boot-1', stamp, 742310000, '1.4.1', 180, True, '2026-09-28', {})
+        self.state = Snapshot('boot-1', stamp, 742310000, '1.4.2.6.9', 180, True, '2026-09-28', {})
         c = Character(1, 'User', 'Живой <персонаж>', stamp, 742310000, stamp, 742310000, -1, -1, 10000, 10000, 'session-1')
         c.skills = {'Woodwork': Skill('Woodwork', 'Carpentry', 3, 940.25)}
         c.skills_at = stamp
@@ -133,13 +133,13 @@ class BotTests(unittest.TestCase):
 
 class TransportTests(unittest.TestCase):
     def test_partial_snapshot_fails_checksum(self):
-        msg=frame([['LPRS1','boot',1,2,'1.4.1',180,1,'2026-09-28']])
+        msg=frame([['LPRS1','boot',1,2,'1.4.2.6.9',180,1,'2026-09-28']])
         with self.assertRaises(ProtocolError):
             rows(msg[:-4])
 
     def test_snapshot_decodes_cyrillic_without_markup_evaluation(self):
         h=lambda s: s.encode().hex()
-        data=frame([['LPRS1','boot',1,2,'1.4.1',180,1,'2026-09-28'],
+        data=frame([['LPRS1','boot',1,2,'1.4.2.6.9',180,1,'2026-09-28'],
             ['C',1,h('Игрок'),h('Имя <&>'),0,0,-1,-1,-1,-1,20,10,'sid'],
             ['E',1,1,12,100000,'ready',h('Hand_L'),1],
             ['K',1,h('Woodwork'),h('Строительство'),3,940.25]])
@@ -162,7 +162,7 @@ class TransportTests(unittest.TestCase):
 
     def test_corrupt_snapshot_slot_uses_other_complete_slot(self):
         panel=Panel(Config('unused',set(),'https://example.test','12345678','private'))
-        data=frame([['LPRS1','boot',1,2,'1.4.1',180,1,'2026-09-28']])
+        data=frame([['LPRS1','boot',1,2,'1.4.2.6.9',180,1,'2026-09-28']])
         panel.call_file=lambda slot: data[:-5] if slot.endswith('a') else data
         self.assertEqual(panel.snapshot().boot,'boot')
 

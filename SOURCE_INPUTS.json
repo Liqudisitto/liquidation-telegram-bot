@@ -1,0 +1,14 @@
+{
+  "release": "1.4.2.6.9",
+  "base": "user supplied corrected 1.4.1 FIX",
+  "inputs": [
+    {
+      "filename": "Liquidation-1.4.1-WORKSHOP-FIX.zip",
+      "sha256": "f8c045f7dbceff2d86a136c4a70fe7ae97fc3dcc13bf3aee82e3993b1276b0b5"
+    },
+    {
+      "filename": "Liquidation-Telegram-Bot-1.4.1-FIX.zip",
+      "sha256": "0f95d24ccaa96aa026bb87ad9943f49b147e1930d2159648f87dcc3d062b1900"
+    }
+  ]
+}

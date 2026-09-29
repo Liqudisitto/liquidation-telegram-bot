@@ -1,0 +1,23 @@
+{
+  "version": "1.4.2.6.9",
+  "sha256": {
+    ".env.example": "5411779044035a6b4f2e048a6919387702d4650c9454a2d8864cc1e646e7edfe",
+    ".gitignore": "ae0e069c69b87665fd72ad8fad87edd5b0d8dff0b678b6f1344f86a966aedbf0",
+    "Dockerfile": "dcb8e65dcfef7ec79b20fef0addc613de16ccebe45b746c11020d8814e88ec68",
+    "README.md": "42d401c4fdbac540c6064933ee6ea6405767751921b6c0cd4df33b53b7748c76",
+    "SOURCE_INPUTS.json": "bc3171afa7da50a36df3c2b8b319fd03118370e6efeba882e119d81e829208a7",
+    "TESTING.md": "e581b911253f78adf133bcf95131671c834d3fc9f89c58f799280719d4b90549",
+    "UPDATE_1_4_2_6_9_RU.md": "1dcb0d1a260a7619218e56799f0704969093b4fbbb8195896d72908d843c149c",
+    "bot.py": "cd6706649d0b5f342dd74bc4f504546ae9b0545076f092ff1491e8870d5ad5b8",
+    "bothost.json": "9d12615a5f03bb0ad0eb57d4b741cd770c63abb2f31315b978c1060438588cd1",
+    "main.py": "c20e6c237fa293d6f1d8e89c21c3178a4ef8a7c7d2a2e0954301e6cd2f4793c0",
+    "protocol.py": "cf69dc2f2cb4a8be4687ce2a42d5bc3a0edc624ccbef7556cc072593fab525ef",
+    "requirements.txt": "3270e219eb96986f8bf6bda6d6194bd5b1e957240d186fed01f07ce0eac3213c",
+    "tests/BOT_1_4_2_6_9_RESULTS.txt": "e1f0d2db568f2be7955a733099904a014eb388ec2c38b4c682c77abffe17faf3",
+    "tests/test_bot.py": "9d7d84336a5fb6767e2fe7c6c718a207d87bc00610f36aa066e16c052010c465",
+    "tests/test_update_141.py": "15eb4595fe2f00befe18f2478964e5191f40fb7abfa0e74d5e7c526758300488",
+    "tests/test_update_14269.py": "02be039b67202e645a1977406aaa73d0fa3a0caf0d015ef81adb0dae088a232e",
+    "transport.py": "8b8839e6b311d334801a6d04c8290c73884d868b44a8690abae6b59f3354f167",
+    "ui.py": "e0700527d8160366de03e6e82082da521a265a5630b839ddc821400f1fa0e4dd"
+  }
+}

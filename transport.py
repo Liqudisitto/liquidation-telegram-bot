@@ -13,7 +13,9 @@ from protocol import MAX_BYTES, ProtocolError, snapshot, rows, request
 
 
 class ApiError(RuntimeError):
-    pass
+    def __init__(self, message, status=None):
+        super().__init__(message)
+        self.status = status
 
 
 class TelegramError(ApiError):
@@ -44,12 +46,12 @@ def http(url, body=None, headers=None, timeout=35, cap=MAX_BYTES, telegram_error
             if len(data) <= cap:
                 return data
         if error.code == 404:
-            raise ApiError('HTTP 404: проверь адрес панели, Server ID и путь к файлам мода.') from None
+            raise ApiError('HTTP 404: проверь адрес панели, Server ID и путь к файлам мода.', 404) from None
         if error.code in (401, 403):
-            raise ApiError('HTTP 401/403: проверь ключ и права доступа.') from None
+            raise ApiError('HTTP 401/403: проверь ключ и права доступа.', error.code) from None
         if error.code == 429:
-            raise ApiError('HTTP 429: сервис ограничил запросы. Подожди немного.') from None
-        raise ApiError(f'HTTP {error.code}: сервис отклонил запрос.') from None
+            raise ApiError('HTTP 429: сервис ограничил запросы. Подожди немного.', error.code) from None
+        raise ApiError(f'HTTP {error.code}: сервис отклонил запрос.', error.code) from None
     except (urllib.error.URLError, TimeoutError, OSError):
         raise ApiError('Нет ответа HTTPS-сервиса. Проверь соединение и настройки.') from None
 
@@ -93,6 +95,88 @@ class Panel:
     def __init__(self, config):
         self.config = config
 
+    def api(self, endpoint, payload=None):
+        if endpoint not in ('resources', 'command', 'power'):
+            raise ApiError('Неизвестная операция панели.')
+        c = self.config
+        c.validate_panel()
+        raw = http(c.panel + '/api/client/servers/' + c.server + '/' + endpoint,
+            None if payload is None else json.dumps(payload).encode('utf-8'),
+            {'Authorization': 'Bearer ' + c.key, 'Accept': 'Application/vnd.pterodactyl.v1+json',
+             'Content-Type': 'application/json'}, timeout=12, cap=65536)
+        if payload is not None:
+            return None  # HTTP acceptance is not proof of a saved world/completed restart.
+        try:
+            data = json.loads(raw)
+            a = data['attributes']
+            if a['current_state'] not in ('running', 'starting', 'stopping', 'offline'):
+                raise ValueError()
+            if not isinstance(a['is_suspended'], bool):
+                raise ValueError()
+            uptime = a.get('resources', {}).get('uptime')
+            if uptime is not None and (type(uptime) not in (int, float) or not 0 <= uptime <= 10**15):
+                raise ValueError()
+            return {'state': a['current_state'], 'suspended': a['is_suspended'], 'uptime': uptime}
+        except (ValueError, TypeError, KeyError, AttributeError):
+            raise ApiError('Панель вернула неизвестный формат состояния сервера.') from None
+
+    def host_allowed(self, actor):
+        # The game can be offline: read the same server-side allowlist directly.
+        # No fallback to ADMIN_IDS alone if the file cannot be read.
+        if type(actor) is not int or actor not in self.config.admins:
+            raise ApiError('Доступ к управлению Ликвидусом закрыт.')
+        try:
+            raw = self.call_file('admins')
+            if len(raw) > 4096:
+                raise ValueError()
+            allowed = set()
+            for line in raw.decode('utf-8').splitlines():
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                if not re.fullmatch(r'[1-9][0-9]{0,19}', line):
+                    raise ValueError()
+                allowed.add(int(line))
+        except (UnicodeError, ValueError):
+            raise ApiError('Проверь формат remote_admins.txt: один Telegram ID на строку, UTF-8 без BOM.') from None
+        if actor not in allowed:
+            raise ApiError('Твой Telegram ID не указан в remote_admins.txt на игровом сервере.')
+
+    @staticmethod
+    def host_ready(action, status):
+        if action not in ('save', 'check', 'restart', 'stop', 'start'):
+            raise ApiError('Неизвестное действие Ликвидуса.')
+        if status['suspended']:
+            raise ApiError('Хостинг приостановил сервер. Проверь панель EGNetwork.')
+        expected = 'offline' if action == 'start' else 'running'
+        if status['state'] != expected:
+            raise ApiError('Для включения сервер должен быть выключен; для остальных действий — запущен. Обнови состояние.')
+
+    def host_action(self, actor, action, preview):
+        self.host_allowed(actor)
+        current = self.api('resources')
+        self.host_ready(action, current)
+        if current['state'] != preview['state'] or (current['uptime'] is not None
+                and preview.get('uptime') is not None and current['uptime'] < preview['uptime']):
+            raise ApiError('Состояние сервера изменилось после подтверждения. Выбери действие заново.')
+        endpoint = 'command' if action in ('save', 'check') else 'power'
+        payload = {'command': {'save': 'save', 'check': 'checkModsNeedUpdate'}[action]} if endpoint == 'command' else {'signal': action}
+        try:
+            self.api(endpoint, payload)
+        except ApiError as error:
+            if error.status is not None and 400 <= error.status < 500:
+                raise
+            # A timeout/5xx can happen after the command reached Wings.
+            # Do not retry a power operation or send an alternative console command.
+            return 'Итог запроса неизвестен. Автоповтора нет. Проверь состояние и консоль EGNetwork перед повтором.'
+        return {
+            'save': 'Панель приняла команду save. Завершение сохранения проверь в консоли сервера.',
+            'check': 'Панель приняла checkModsNeedUpdate. Результат проверки модов появится в консоли и игровом чате. Это проверка Workshop, не обновление версии игры.',
+            'restart': 'Панель приняла сигнал перезапуска. Дождись загрузки мира; состояние «запущен» относится к процессу в панели.',
+            'stop': 'Панель приняла сигнал обычной остановки. Обнови состояние через несколько секунд.',
+            'start': 'Панель приняла сигнал запуска. Загрузка мира и модов может занять несколько минут.'
+        }[action]
+
     def call_file(self, suffix, content=None):
         c = self.config
         c.validate_panel()
@@ -111,7 +195,7 @@ class Panel:
             except (ApiError, ProtocolError) as error:
                 errors.append(str(error))
         if not found:
-            raise ApiError(errors[0] + ' Мод 1.4.1 должен быть запущен на игровом сервере.')
+            raise ApiError(errors[0] + ' Мод 1.4.2.6.9 должен быть запущен на игровом сервере.')
         return max(found, key=lambda x: x.stamp)
 
     def execute(self, actor, state, character, action, argument):
