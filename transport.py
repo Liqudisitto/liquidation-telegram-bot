@@ -100,10 +100,15 @@ class Panel:
             raise ApiError('Неизвестная операция панели.')
         c = self.config
         c.validate_panel()
-        raw = http(c.panel + '/api/client/servers/' + c.server + '/' + endpoint,
-            None if payload is None else json.dumps(payload).encode('utf-8'),
-            {'Authorization': 'Bearer ' + c.key, 'Accept': 'Application/vnd.pterodactyl.v1+json',
-             'Content-Type': 'application/json'}, timeout=12, cap=65536)
+        try:
+            raw = http(c.panel + '/api/client/servers/' + c.server + '/' + endpoint,
+                None if payload is None else json.dumps(payload).encode('utf-8'),
+                {'Authorization': 'Bearer ' + c.key, 'Accept': 'Application/vnd.pterodactyl.v1+json',
+                 'Content-Type': 'application/json'}, timeout=12, cap=65536)
+        except ApiError as error:
+            if error.status is None and str(error) == 'Нет ответа HTTPS-сервиса. Проверь соединение и настройки.':
+                raise ApiError('Нет ответа API панели EGNetwork. Проверь PZ_PANEL_URL и доступность панели.') from None
+            raise
         if payload is not None:
             return None  # HTTP acceptance is not proof of a saved world/completed restart.
         try:
@@ -184,8 +189,13 @@ class Panel:
         method = 'contents' if content is None else 'write'
         url = (c.panel + '/api/client/servers/' + c.server + '/files/' + method + '?' +
                urllib.parse.urlencode({'file': path}))
-        return http(url, content, {'Authorization': 'Bearer ' + c.key,
-                    'Accept': 'Application/vnd.pterodactyl.v1+json', 'Content-Type': 'text/plain'}, timeout=12)
+        try:
+            return http(url, content, {'Authorization': 'Bearer ' + c.key,
+                        'Accept': 'Application/vnd.pterodactyl.v1+json', 'Content-Type': 'text/plain'}, timeout=12)
+        except ApiError as error:
+            if error.status is None and str(error) == 'Нет ответа HTTPS-сервиса. Проверь соединение и настройки.':
+                raise ApiError('Нет ответа файлового API панели EGNetwork. Проверь PZ_PANEL_URL и доступность панели.') from None
+            raise
 
     def snapshot(self):
         found, errors = [], []
@@ -234,6 +244,10 @@ class Telegram:
             result = json.loads(http(self.base + method,
                 json.dumps(data, ensure_ascii=False).encode(), {'Content-Type': 'application/json'},
                 timeout=35, telegram_errors=True))
+        except ApiError as error:
+            if error.status is None and str(error) == 'Нет ответа HTTPS-сервиса. Проверь соединение и настройки.':
+                raise ApiError('Нет ответа Telegram API. Проверь сеть BotHost и доступность api.telegram.org.') from None
+            raise
         except (ValueError, UnicodeError):
             raise ApiError('Некорректный ответ Telegram.') from None
         if not result.get('ok'):
