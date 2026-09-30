@@ -66,10 +66,10 @@ class Bot:
         else:
             self.menu(actor, actor, message)
 
-    def menu(self, actor, chat, text='Liquidation 1.5.0.6.9 FIX1 — управление сервером'):
+    def menu(self, actor, chat, text=None):
         self.context.pop(actor, None)
         self.host_context.discard(actor)
-        self.show(chat, text, [
+        self.show(chat, text or f'GeniusMobilus {VERSION} — управление сервером', [
             [self.button(actor, '🟢 Онлайн', 'users', online=True), self.button(actor, '📊 Все игроки', 'users')],
             [self.button(actor, '📅 Время за сегодня', 'users', today_only=True)],
             [self.button(actor, '📋 Журнал операций', 'journal')],
@@ -103,10 +103,10 @@ class Bot:
         self.panel.host_ready(data['action'], status)
         notes = {
             'save': 'Передать команду сохранения текущего мира в консоль?',
-            'check': 'Запросить проверку обновлений модов Steam Workshop? Результат будет в консоли и игровом чате.',
-            'restart': 'Перезапустить сервер сейчас через панель? Игроки будут отключены. Пятиминутного отсчёта watchdog здесь нет.',
+            'check': 'Запросить проверку обновлений модов Steam Workshop? Результат появится здесь после ответа сервера.',
+            'restart': 'Перезапустить сервер сейчас через панель? Игроки будут отключены.',
             'stop': 'Выключить сервер сейчас через обычную остановку панели? Игроки будут отключены.',
-            'start': 'Включить сервер через панель EGNetwork?'}
+            'start': 'Включить сервер через панель хостинга?'}
         self.show(actor, data['label'] + '\n' + notes[data['action']], [
             [self.button(actor, '✅ Подтвердить', 'hostconfirm', action=data['action'], label=data['label'],
                          preview=status, offered=time.monotonic())],
@@ -164,7 +164,7 @@ class Bot:
             raise ApiError('Закрой кавычки вокруг имени пользователя.') from None
         cmd = args[0].split('@')[0].lower() if args else ''
         if cmd in ('/start', '/menu', '/help'):
-            self.menu(actor, actor, 'Liquidation 1.5.0.6.9 FIX1\nВыбери игрока и персонажа кнопками.\n'
+            self.menu(actor, actor, f'GeniusMobilus {VERSION}\nВыбери игрока и персонажа кнопками.\n'
                 '/player "Имя пользователя" — карточка\n/totaltime "Имя пользователя" — всё время\n'
                 '/todaytime "Имя пользователя" — сегодня\n/myid — твой Telegram ID')
         elif cmd in ('/player', '/stats', '/totaltime', '/todaytime') and len(args) >= 2:
@@ -327,7 +327,7 @@ class Bot:
     @staticmethod
     def controllable(state, c):
         if state.version != VERSION:
-            raise ApiError('Версии бота и мода отличаются. Обнови обе части до 1.5.0.6.9.')
+            raise ApiError(f'Версии бота и мода отличаются. Обнови обе части до {VERSION}.')
         if not state.fresh():
             raise ApiError('Сервер не прислал свежий снимок. Управление временно недоступно.')
         if not state.enabled:

@@ -5,8 +5,8 @@ import re
 import time
 import zlib
 
-VERSION = '1.5.0.6.9'
-BUILD = 'FIX1'
+VERSION = '1.5.1.6.9'
+BUILD = 'R1'
 MAX_BYTES = 16 * 1024 * 1024
 
 

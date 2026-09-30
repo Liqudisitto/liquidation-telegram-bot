@@ -21,7 +21,7 @@ def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     try:
         _, backend = websocket_backend()
-        logging.info('Liquidation bot %s %s; Workshop: %s', VERSION, BUILD, backend)
+        logging.info('GeniusMobilus %s %s; Workshop: %s', VERSION, BUILD, backend)
     except WorkshopError as error:
         logging.warning('Workshop disabled: %s', error)
     config = Config.environment()
@@ -31,7 +31,7 @@ def main():
     # resurrecting a confirmation after a host restart is never intended.
     tg.call('deleteWebhook', drop_pending_updates=True)
     offset = 0
-    logging.info('Liquidation bot %s %s started; configured admins: %d', VERSION, BUILD, len(config.admins))
+    logging.info('GeniusMobilus %s %s started; configured admins: %d', VERSION, BUILD, len(config.admins))
     while running:
         try:
             updates = tg.call('getUpdates', offset=offset, timeout=25,
