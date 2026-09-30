@@ -1,5 +1,6 @@
 """Read a fresh native Workshop result. Never replay a console command."""
 import json
+import importlib
 import re
 import time
 from urllib.parse import urlsplit
@@ -7,6 +8,22 @@ from urllib.parse import urlsplit
 
 class WorkshopError(RuntimeError):
     pass
+
+
+def websocket_backend():
+    # Ship the pinned, unmodified pure-Python library with the bot. BotHost
+    # file updates can leave an old environment even with requirements.txt
+    # present. No pip subprocess, network install or global sys.path change.
+    for module_name, source in (('_vendor.websocket', 'bundled'), ('websocket', 'installed')):
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:
+            continue
+        if (getattr(module, '__version__', None) == '1.9.0'
+                and callable(getattr(module, 'create_connection', None))):
+            return module.create_connection, 'websocket-client 1.9.0 (' + source + ')'
+    raise WorkshopError('Не найден websocket-client 1.9.0. Скопируй папку _vendor из нового архива '
+                        'рядом с main.py и перезапусти бота, либо пересобери его с requirements.txt.')
 
 
 RESULTS = {
@@ -57,11 +74,7 @@ class WorkshopConsole:
                 or not isinstance(token, str) or not 1 <= len(token) <= 16384):
             raise WorkshopError('Панель вернула неподдерживаемый адрес консоли. Нужен защищённый WSS.')
         if connector is None:
-            try:
-                from websocket import create_connection
-            except ImportError:
-                raise WorkshopError('Установи зависимости бота из requirements.txt и перезапусти BotHost.') from None
-            connector = create_connection
+            connector, _ = websocket_backend()
         self.clock = clock
         self.socket = None
         try:

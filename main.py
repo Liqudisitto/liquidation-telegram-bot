@@ -3,8 +3,9 @@ import logging
 import signal
 import time
 from bot import Bot
-from protocol import VERSION
+from protocol import VERSION, BUILD
 from transport import ApiError, Config, Panel, Telegram
+from workshop import websocket_backend, WorkshopError
 
 running = True
 
@@ -18,6 +19,11 @@ def main():
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+    try:
+        _, backend = websocket_backend()
+        logging.info('Liquidation bot %s %s; Workshop: %s', VERSION, BUILD, backend)
+    except WorkshopError as error:
+        logging.warning('Workshop disabled: %s', error)
     config = Config.environment()
     tg = Telegram(config.token)
     bot = Bot(config, tg, Panel(config))
@@ -25,7 +31,7 @@ def main():
     # resurrecting a confirmation after a host restart is never intended.
     tg.call('deleteWebhook', drop_pending_updates=True)
     offset = 0
-    logging.info('Liquidation bot %s started; configured admins: %d', VERSION, len(config.admins))
+    logging.info('Liquidation bot %s %s started; configured admins: %d', VERSION, BUILD, len(config.admins))
     while running:
         try:
             updates = tg.call('getUpdates', offset=offset, timeout=25,

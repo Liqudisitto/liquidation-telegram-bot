@@ -1,10 +1,12 @@
 """Bounded ASCII transport shared with Liquidation's Lua bridge."""
 from dataclasses import dataclass, field
 import math
+import re
 import time
 import zlib
 
 VERSION = '1.5.0.6.9'
+BUILD = 'FIX1'
 MAX_BYTES = 16 * 1024 * 1024
 
 
@@ -124,6 +126,10 @@ class Character:
     provider: str = ''
     limb_status: str = ''
     wounds: bool = False
+    client_version: str = ''
+    remote_version: str = ''
+    client_build: str = ''
+    client_status: str = ''
 
     @property
     def limb_provider(self):
@@ -154,6 +160,7 @@ class Snapshot:
     enabled: bool
     day: str
     chars: dict
+    build: str = ''
 
     def fresh(self, now=None):
         age = (time.time() if now is None else now) * 1000 - self.stamp
@@ -168,7 +175,11 @@ def snapshot(data):
             raise ValueError()
         out = Snapshot(h[1], int(h[2]), int(h[3]), h[4], int(h[5]), h[6] == '1', h[7], {})
         for a in all_rows[1:]:
-            if a[0] == 'C' and len(a) == 13:
+            if a[0] == 'B' and len(a) == 2:
+                if out.build or not re.fullmatch(r'[A-Za-z0-9_.-]{1,32}', a[1]):
+                    raise ValueError()
+                out.build = a[1]
+            elif a[0] == 'C' and len(a) == 13:
                 cid = int(a[1])
                 if cid in out.chars or cid < 1:
                     raise ValueError()
@@ -194,6 +205,13 @@ def snapshot(data):
                         or (a[2] == 'none') != (a[3] == 'absent')):
                     raise ValueError()
                 c.provider, c.limb_status, c.wounds = a[2], a[3], a[4] == '1'
+            elif a[0] == 'V' and len(a) == 6:
+                c = out.chars[int(a[1])]
+                if (c.client_status or not c.online
+                        or any(not re.fullmatch(r'[A-Za-z0-9_.-]{1,32}', s) for s in a[2:5])
+                        or a[5] not in ('unknown', 'missing', 'mismatch', 'stale', 'ready')):
+                    raise ValueError()
+                c.client_version, c.remote_version, c.client_build, c.client_status = a[2:]
             elif a[0] == 'K' and len(a) == 6:
                 c = out.chars[int(a[1])]
                 s = Skill(unhex(a[2]), unhex(a[3]), int(a[4]), float(a[5]))

@@ -1,6 +1,6 @@
 import shlex
 import time
-from protocol import VERSION
+from protocol import VERSION, BUILD
 from transport import ApiError, TelegramError
 from ui import ACTIONS, LIMBS, PARTS, limb_parts, REASONS, Buttons, character_text, date, duration, skill_name, today, restore_parts, text_pages
 
@@ -66,7 +66,7 @@ class Bot:
         else:
             self.menu(actor, actor, message)
 
-    def menu(self, actor, chat, text='Liquidation 1.5.0.6.9 — управление сервером'):
+    def menu(self, actor, chat, text='Liquidation 1.5.0.6.9 FIX1 — управление сервером'):
         self.context.pop(actor, None)
         self.host_context.discard(actor)
         self.show(chat, text, [
@@ -164,7 +164,7 @@ class Bot:
             raise ApiError('Закрой кавычки вокруг имени пользователя.') from None
         cmd = args[0].split('@')[0].lower() if args else ''
         if cmd in ('/start', '/menu', '/help'):
-            self.menu(actor, actor, 'Liquidation 1.5.0.6.9\nВыбери игрока и персонажа кнопками.\n'
+            self.menu(actor, actor, 'Liquidation 1.5.0.6.9 FIX1\nВыбери игрока и персонажа кнопками.\n'
                 '/player "Имя пользователя" — карточка\n/totaltime "Имя пользователя" — всё время\n'
                 '/todaytime "Имя пользователя" — сегодня\n/myid — твой Telegram ID')
         elif cmd in ('/player', '/stats', '/totaltime', '/todaytime') and len(args) >= 2:
