@@ -5,7 +5,7 @@ import re
 import time
 import zlib
 
-VERSION = '1.5.2.6.9'
+VERSION = '1.5.3.6.9'
 BUILD = 'R1'
 MAX_BYTES = 16 * 1024 * 1024
 
@@ -130,6 +130,13 @@ class Character:
     remote_version: str = ''
     client_build: str = ''
     client_status: str = ''
+    injuries: dict = field(default_factory=dict)
+    injuries_at: int = 0
+    injuries_known: bool = False
+
+    def fresh_injuries(self, now=None):
+        age = (time.time() if now is None else now) * 1000 - self.injuries_at
+        return self.injuries_known and -2000 <= age <= 15000
 
     @property
     def limb_provider(self):
@@ -205,6 +212,22 @@ def snapshot(data):
                         or (a[2] == 'none') != (a[3] == 'absent')):
                     raise ValueError()
                 c.provider, c.limb_status, c.wounds = a[2], a[3], a[4] == '1'
+            elif a[0] == 'J' and len(a) == 5:
+                c = out.chars[int(a[1])]
+                stamp = int(a[2])
+                raw = unhex(a[4])
+                if (not c.online or c.injuries_at or a[3] not in ('0', '1')
+                        or not 1 <= stamp <= out.stamp or len(raw) > 2600):
+                    raise ValueError()
+                injuries = {}
+                for line in raw.split('|') if raw else []:
+                    part, flags = line.split('=')
+                    values = flags.split(',')
+                    if (part not in DEATH_PARTS or part in injuries or len(set(values)) != len(values)
+                            or any(f not in WOUND_FLAGS[:10] for f in values)):
+                        raise ValueError()
+                    injuries[part] = values
+                c.injuries, c.injuries_at, c.injuries_known = injuries, stamp, a[3] == '1'
             elif a[0] == 'V' and len(a) == 6:
                 c = out.chars[int(a[1])]
                 if (c.client_status or not c.online

@@ -2,7 +2,7 @@ import shlex
 import time
 from protocol import VERSION, BUILD
 from transport import ApiError, TelegramError
-from ui import ACTIONS, LIMBS, PARTS, limb_parts, REASONS, Buttons, character_text, date, duration, skill_name, today, restore_parts, text_pages
+from ui import ACTIONS, LIMBS, PARTS, WOUNDS, limb_parts, REASONS, Buttons, character_text, date, duration, skill_name, today, restore_parts, text_pages
 
 
 class UIError(ApiError):
@@ -233,6 +233,10 @@ class Bot:
                 self.character(actor, state, c)
             elif kind == 'skills':
                 self.skills(actor, state, c, data.get('page', 0))
+            elif kind == 'healing':
+                self.healing(actor, state, c)
+            elif kind == 'injuries':
+                self.injuries(actor, state, c, data.get('page', 0))
             elif kind == 'level':
                 self.controllable(state, c)
                 s = c.skills[data['perk']]
@@ -296,7 +300,7 @@ class Bot:
             notice = self.results[actor][1]
         keys = [[self.button(actor, '📚 Навыки', 'skills', cid=c.id)]]
         if c.online and state.fresh() and state.enabled:
-            keys += [[self.button(actor, '💚 Отхил', 'preview', cid=c.id, action='heal'),
+            keys += [[self.button(actor, '💚 Отхил', 'healing', cid=c.id),
                       self.button(actor, '💀 Убить', 'preview', cid=c.id, action='kill')]]
             keys += [[self.button(actor, ACTIONS[a], 'parts', cid=c.id, action=a)] for a in ('bite', 'cut', 'scratch', 'deep')]
             if c.limbs_ready:
@@ -335,10 +339,61 @@ class Bot:
         if not c.online:
             raise ApiError('Этот персонаж сейчас не в игре.')
 
+    def healing(self, actor, state, c):
+        self.controllable(state, c)
+        keys = [[self.button(actor, ACTIONS[action], 'preview', cid=c.id, action=action)]
+                for action in ('heal', 'healwounds')]
+        keys += [[self.button(actor, 'Вылечить определённые раны', 'injuries', cid=c.id)]]
+        keys += [[self.button(actor, ACTIONS[action], 'preview', cid=c.id, action=action)]
+                 for action in ('maxhealth', 'cleardebuffs', 'cureknox')]
+        self.show(actor, f'Отхил — «{c.name}» [№{c.id}]\nВыбери вид лечения. Ампутации не восстанавливаются.',
+                  keys + [self.character_back(actor, c), [self.button(actor, 'Главное меню', 'menu')]])
+
+    def injuries(self, actor, state, c, page=0):
+        self.controllable(state, c)
+        keys = []
+        if not c.fresh_injuries():
+            text = 'Свежие данные о ранах ещё не получены. Подожди 5 секунд и нажми «Обновить раны».'
+        else:
+            choices = [(part, flag) for part in PARTS for flag in c.injuries.get(part, ())
+                       if part not in c.amputated and flag in WOUNDS and flag not in ('bandaged', 'stitched')]
+            text = f'Текущие раны «{c.name}»\nДанные: {date(c.injuries_at, state.offset)}\nВыбери рану для лечения.' if choices else 'Подходящих ран сейчас нет.'
+            text += '\nАмпутации и раны культей в список не входят.'
+            keys += [[self.button(actor, f'{WOUNDS[flag]} — {PARTS[part]}', 'preview', cid=c.id,
+                       action='healwound', arg=part+':'+flag)] for part, flag in choices[page*10:(page+1)*10]]
+            if page:
+                keys += [[self.button(actor, '← Назад', 'injuries', cid=c.id, page=page-1)]]
+            if (page+1)*10 < len(choices):
+                keys += [[self.button(actor, 'Далее →', 'injuries', cid=c.id, page=page+1)]]
+        keys += [[self.button(actor, '↻ Обновить раны', 'injuries', cid=c.id, page=page)],
+                 [self.button(actor, 'К отхилу', 'healing', cid=c.id)], self.character_back(actor, c)]
+        self.show(actor, text, keys)
+
+    @staticmethod
+    def transfer_changes(state, c, arg):
+        source = state.chars[int(arg)]
+        if source.user != c.user or source.alive or not source.skills or source.skills_at <= 0:
+            raise ApiError('Источник навыков недоступен.')
+        if not c.skills or not -2000 <= time.time()*1000-c.skills_at <= 20000:
+            raise ApiError('Нет свежего снимка навыков нового персонажа. Подожди 5 секунд и обнови карточку.')
+        changed, skipped, fingerprint = [], [], []
+        for sid, old in sorted(source.skills.items(), key=lambda item: skill_name(item[1]).casefold()):
+            current = c.skills.get(sid)
+            fingerprint.append((sid, old.level, old.xp, current.level if current else None, current.xp if current else None))
+            if current is None:
+                skipped.append(skill_name(old))
+            elif current.level != old.level or abs(current.xp-old.xp) > 0.0001:
+                line = f'{skill_name(old)} {current.level} ур. → {old.level} ур.'
+                if current.level == old.level:
+                    line += f' (XP {current.xp:g} → {old.xp:g})'
+                changed.append(line)
+        return source, changed, skipped, tuple(fingerprint)
+
     def preview(self, actor, state, c, action, arg):
         self.context[actor] = (state, c)
         self.controllable(state, c)
         text = f'Подтвердить: {ACTIONS[action]}\nИгрок: {c.user}\nПерсонаж: «{c.name}» [№{c.id}]'
+        transfer_guard = None
         if action in ('bite', 'cut', 'scratch', 'deep', 'amputate', 'restore'):
             text += '\nЧасть тела: ' + PARTS[arg]
             if action == 'restore':
@@ -364,17 +419,36 @@ class Bot:
                 text += '\nCasualties Undead: кровь, органы, ритм сердца, состояния болезней и культей. Утраченные глаза и история психических травм сохраняются.'
             if c.wounds:
                 text += '\nОчистка медицинских состояний Wounds Overhaul.'
+        elif action == 'healwounds':
+            if not c.fresh_injuries():
+                raise ApiError('Нет свежего списка ран. Подожди 5 секунд и открой отхил заново.')
+            text += '\nВылечить все обычные раны. Ампутационные культи сохраняются. Здоровье, вирус Нокс и остальные состояния отдельно не меняются.'
+        elif action == 'healwound':
+            part, flag = arg.split(':')
+            if not c.fresh_injuries() or part in c.amputated or flag not in c.injuries.get(part, ()):
+                raise ApiError('Этой раны уже нет или список устарел. Обнови раны.')
+            text += f'\n{WOUNDS[flag]} — {PARTS[part]}\nБудет вылечена только выбранная рана.'
+        elif action == 'maxhealth':
+            text += '\nВосстановить здоровье до максимума. Раны, инфекции и ампутации сохраняются; они могут снова снижать здоровье.'
+        elif action == 'cleardebuffs':
+            text += '\nУбрать голод, жажду, усталость, боль, стресс, отравление и другие поддерживаемые состояния, включая Нокс. Раны и ампутации сохраняются. При действующей причине состояния могут вернуться.'
+        elif action == 'cureknox':
+            text += '\nУбрать только вирус Нокс и отменить заражение/посмертную зомбификацию этого живого персонажа. Раны, сепсис, отравление и прочие состояния сохраняются. Умершие персонажи не воскрешаются.'
         elif action == 'setskill':
             sid, level = arg.rsplit(':', 1)
             text += f'\n{skill_name(c.skills[sid])}: {c.skills[sid].level} → {level}. XP — начало выбранного уровня.'
         elif action == 'transfer':
-            source = state.chars[int(arg)]
-            if source.user != c.user or source.alive or not source.skills:
-                raise ApiError('Источник навыков недоступен.')
+            source, changes, skipped, transfer_guard = self.transfer_changes(state, c, arg)
             text += f'\nИсточник: «{source.name}» [№{source.id}], мёртв.\nСнимок навыков: {date(source.skills_at, state.offset)}'
-            text += f'\nУровни и XP {len(source.skills)} навыков будут заменены сохранёнными значениями, включая силу и физподготовку.'
+            text += '\n\nПотенциальные изменения:\n' + ('\n'.join(changes) if changes else 'Доступные навыки уже совпадают — изменений нет.')
+            text += '\nУровни и XP доступных навыков заменяются сохранёнными значениями.'
+            if skipped:
+                text += '\n\n(Не перенесутся: ' + ', '.join(skipped) + ' — эти навыки отсутствуют в текущем наборе модов сервера.)'
+            if not changes:
+                self.show(actor, text, [self.character_back(actor, c)])
+                return
         self.show(actor, text, [[self.button(actor, '✅ Подтвердить', 'confirm', cid=c.id,
-            boot=state.boot, session=c.session, action=action, arg=arg)],
+            boot=state.boot, session=c.session, action=action, arg=arg, transfer_guard=transfer_guard)],
             [self.button(actor, 'Отмена', 'character', cid=c.id)]])
 
     def confirm(self, actor, state, data):
@@ -382,6 +456,11 @@ class Bot:
         self.controllable(state, c)
         if state.boot != data['boot'] or c.session != data['session']:
             raise ApiError('Персонаж или сервер сменил сессию. Требуется новое подтверждение.')
+        if data['action'] == 'transfer':
+            _, _, _, guard = self.transfer_changes(state, c, data['arg'])
+            if guard != data.get('transfer_guard'):
+                self.preview(actor, state, c, data['action'], data['arg'])
+                return
         self.context[actor] = (state, c)
         self.show(actor, f'Запрос отправляется на сервер…\nПерсонаж: «{c.name}» [№{c.id}]')
         argument = data['arg']
