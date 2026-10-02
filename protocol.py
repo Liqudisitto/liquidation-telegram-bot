@@ -5,13 +5,24 @@ import re
 import time
 import zlib
 
-VERSION = '1.6.1.6.9'
+VERSION = '1.69'
+# Stable control protocol, independent of the bot and mod release numbers.
 BUILD = 'R1'
+SUPPORTED_PROTOCOLS = frozenset({BUILD})
 MAX_BYTES = 16 * 1024 * 1024
 
 
 class ProtocolError(ValueError):
     pass
+
+
+def require_compatible_protocol(state):
+    if not state.build:
+        raise ProtocolError('Мод не сообщил протокол управления. Проверь загрузку серверного модуля Liquidation.')
+    if state.build not in SUPPORTED_PROTOCOLS:
+        supported = ', '.join(sorted(SUPPORTED_PROTOCOLS))
+        raise ProtocolError(f'Протокол управления мода {state.build} не поддерживается этим ботом '
+                            f'(поддерживается {supported}). Обнови бота до выпуска с поддержкой этого протокола.')
 
 
 def frame(rows):
@@ -249,5 +260,6 @@ def snapshot(data):
 
 
 def request(rid, state, actor, character, action, argument='-'):
+    require_compatible_protocol(state)
     return frame([['LPRQ1', rid, state.boot, state.stamp, actor, action,
                    character.id, character.session, argument, 'CONFIRM']])

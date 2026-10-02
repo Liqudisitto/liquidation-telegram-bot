@@ -10,7 +10,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from workshop import WorkshopConsole, WorkshopError
-from protocol import VERSION, MAX_BYTES, ProtocolError, snapshot, rows, request
+from protocol import MAX_BYTES, ProtocolError, snapshot, rows, request
 
 
 class ApiError(RuntimeError):
@@ -224,7 +224,7 @@ class Panel:
             except (ApiError, ProtocolError) as error:
                 errors.append(str(error))
         if not found:
-            raise ApiError(errors[0] + f' Мод Liquidation {VERSION} должен быть запущен на игровом сервере.')
+            raise ApiError(errors[0] + ' Мод Liquidation должен быть запущен на игровом сервере.')
         return max(found, key=lambda x: x.stamp)
 
     def execute(self, actor, state, character, action, argument):

@@ -1,6 +1,6 @@
 import shlex
 import time
-from protocol import VERSION, BUILD
+from protocol import VERSION, ProtocolError, require_compatible_protocol
 from transport import ApiError, TelegramError
 from ui import ACTIONS, LIMBS, PARTS, WOUNDS, limb_parts, REASONS, Buttons, character_text, date, duration, skill_name, today, restore_parts, text_pages
 
@@ -330,8 +330,10 @@ class Bot:
 
     @staticmethod
     def controllable(state, c):
-        if state.version != VERSION:
-            raise ApiError(f'Версии бота и мода отличаются. Обнови обе части до {VERSION}.')
+        try:
+            require_compatible_protocol(state)
+        except ProtocolError as error:
+            raise ApiError(str(error)) from None
         if not state.fresh():
             raise ApiError('Сервер не прислал свежий снимок. Управление временно недоступно.')
         if not state.enabled:
