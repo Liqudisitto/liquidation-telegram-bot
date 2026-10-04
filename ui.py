@@ -89,9 +89,9 @@ REASONS = {
     'response_timeout': 'Подтверждение не получено. Проверь персонажа и журнал перед повтором.',
     'delivery_unknown': 'Неизвестно, дошёл ли запрос. Проверь персонажа и журнал перед повтором.',
     'client_timeout_check_player': 'Итог не подтверждён вовремя. Действие могло уже примениться на сервере. Проверь персонажа перед повтором.',
-    'client_prepare_timeout': 'Клиент не подтвердил готовность за 10 секунд. Действие не применялось. Проверь /liquidusversion и журнал игры на ПК.',
-    'client_version_mismatch': 'На ПК игрока загружена старая или смешанная сборка Liquidus. Установи целиком ту же версию мода, что на сервере. Проверь /liquidusversion, убери старую локальную копию Workshop и полностью перезапусти игру.',
-    'client_bridge_missing': 'Клиентский модуль управления ещё не подтвердил загрузку. Подожди 5 секунд и обнови карточку. Если ошибка остаётся: проверь совпадение версии Liquidus на ПК и сервере, /liquidusversion и журнал игры.',
+    'client_prepare_timeout': 'Клиент не подтвердил готовность за 10 секунд. Действие не применялось. Проверь журнал игры на ПК.',
+    'client_version_mismatch': 'На ПК игрока загружена старая или смешанная сборка Liquidus. Установи целиком ту же версию мода, что на сервере. Убери старую локальную копию Workshop и полностью перезапусти игру.',
+    'client_bridge_missing': 'Клиентский модуль управления ещё не подтвердил загрузку. Подожди 5 секунд и обнови карточку. Если ошибка остаётся: проверь совпадение версии Liquidus на ПК и сервере и журнал игры.',
     'client_bridge_stale': 'Клиентский модуль управления перестал отвечать. Обнови карточку через 5 секунд; если связь не восстановится, перезайди и проверь журнал игры.',
     'client_adapter_error': 'Ошибка медицинского адаптера на ПК игрока. Действие не применялось. Нужен console.txt с ПК за момент запроса.',
     'started_no_final_result': 'Запрос был принят, итог не сохранён. Автоповтора не будет.',
@@ -173,10 +173,15 @@ def death_lines(d, offset):
     return lines
 
 
+def playtime_off(state):
+    when = date(state.playtime_since, state.offset) if state.playtime_since > 0 else 'неизвестно'
+    return f'LiquidusPlaytime выключен на сервере.\nПоследний снимок статистики: {when}'
+
+
 def character_text(state, c, dates=True):
     status = 'жив' if c.alive else 'мёртв'
     text = [f'Персонаж «{c.name}» [№{c.id}] — {status}', f'Игрок: {c.user}',
-            f'Всего: {duration(c.total)}', f'Сегодня: {duration(today(state, c))}',
+            *([f'Всего: {duration(c.total)}', f'Сегодня: {duration(today(state, c))}'] if state.playtime else [playtime_off(state)]),
             'Убито зомби: ' + (str(c.kills) if c.kills >= 0 else 'пока неизвестно')]
     if dates:
         text += ['Рождение:', '  Игровое: ' + date(c.born_game, real=False),
@@ -204,7 +209,7 @@ def character_text(state, c, dates=True):
         text += ['Liquidus на ПК: ' + shown(c.client_version),
                  'Модуль управления: ' + shown(c.remote_version) + ' · ' + shown(c.client_build)]
         if c.client_status == 'mismatch':
-            text += [f'Клиент нужно обновить целиком до {state.version}. Проверь /liquidusversion.']
+            text += [f'Клиент нужно обновить целиком до {state.version}.']
         elif c.client_status in ('unknown', 'missing', 'stale'):
             text += ['Свежего подтверждения клиентского модуля нет. Подожди 5 секунд и обнови карточку.']
     if not state.fresh():

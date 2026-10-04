@@ -2,7 +2,7 @@ import shlex
 import time
 from protocol import VERSION, ProtocolError, require_compatible_protocol
 from transport import ApiError, TelegramError
-from ui import ACTIONS, LIMBS, PARTS, WOUNDS, limb_parts, REASONS, Buttons, character_text, date, duration, skill_name, today, restore_parts, text_pages
+from ui import ACTIONS, LIMBS, PARTS, WOUNDS, limb_parts, REASONS, Buttons, character_text, date, duration, playtime_off, skill_name, today, restore_parts, text_pages
 
 
 class UIError(ApiError):
@@ -205,6 +205,9 @@ class Bot:
         state = self.panel.snapshot()
         if kind == 'users':
             self.context.pop(actor, None)
+            if data.get('today_only') and not state.playtime:
+                self.show(actor, playtime_off(state), [[self.button(actor, 'Главное меню', 'menu')]])
+                return
             users = sorted({c.user for c in state.chars.values()
                 if (not data.get('online') or c.online) and (not data.get('today_only') or today(state, c) > 0)}, key=str.casefold)
             page = data.get('page', 0)
@@ -276,12 +279,19 @@ class Bot:
             keys.append([self.button(actor, '← Назад', 'user', user=user, page=page-1)])
         if (page+1)*10 < len(chars):
             keys.append([self.button(actor, 'Далее →', 'user', user=user, page=page+1)])
+        if not state.playtime:
+            keys.append([self.button(actor, 'Главное меню', 'menu')])
+            self.show(actor, f'Игрок {user}\n{playtime_off(state)}\nПерсонажей: {len(chars)}', keys)
+            return
         keys += [[self.button(actor, 'Всё время', 'report', user=user), self.button(actor, 'Сегодня', 'report', user=user, today=True)]]
         keys.append([self.button(actor, 'Главное меню', 'menu')])
         self.show(actor, f'Игрок {user}\nВсего: {duration(sum(c.total for c in chars))}\n'
             f'Сегодня: {duration(sum(today(state, c) for c in chars))}\nПерсонажей: {len(chars)}', keys)
 
     def report(self, actor, state, user, only_today):
+        if not state.playtime:
+            self.show(actor, playtime_off(state), [[self.button(actor, 'К игроку', 'user', user=user)]])
+            return
         chars = [c for c in state.chars.values() if c.user == user and (not only_today or today(state, c) > 0)]
         lines = [f'Игрок {user} — ' + ('за сегодня' if only_today else 'всё время'),
                  'Итого: ' + duration(sum(today(state, c) if only_today else c.total for c in chars))]

@@ -5,7 +5,7 @@ import re
 import time
 import zlib
 
-VERSION = '1.69'
+VERSION = '2.69'
 # Stable control protocol, independent of the bot and mod release numbers.
 BUILD = 'R1'
 SUPPORTED_PROTOCOLS = frozenset({BUILD})
@@ -179,6 +179,10 @@ class Snapshot:
     day: str
     chars: dict
     build: str = ''
+    # LiquidusPlaytime switch (mod 1.7.3.6.9+). Off: time is not counted;
+    # playtime_since is the real-time ms of the last statistics snapshot.
+    playtime: bool = True
+    playtime_since: int = 0
 
     def fresh(self, now=None):
         age = (time.time() if now is None else now) * 1000 - self.stamp
@@ -197,6 +201,11 @@ def snapshot(data):
                 if out.build or not re.fullmatch(r'[A-Za-z0-9_.-]{1,32}', a[1]):
                     raise ValueError()
                 out.build = a[1]
+            elif a[0] == 'P' and len(a) == 3:
+                since = int(a[2])
+                if not out.playtime or a[1] != '0' or since < 0:
+                    raise ValueError()
+                out.playtime, out.playtime_since = False, since
             elif a[0] == 'C' and len(a) == 13:
                 cid = int(a[1])
                 if cid in out.chars or cid < 1:
